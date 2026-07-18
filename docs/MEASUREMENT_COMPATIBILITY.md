@@ -190,14 +190,14 @@ The initial one-packet latency estimate is replaced when the later 20-packet lat
 ## 9. Loaded latency
 
 - Loaded probes use the zero-byte download endpoint.
-- Probes begin while an enabled bandwidth request is active.
+- One probe loop begins for each enabled payload-size group and remains active across every sequential request in that group.
 - The interval between probe starts is at least 400 ms.
 - Loaded-latency points are retained for a payload-size group only when every completed transfer in that group lasts at least 250 ms.
 - Keep no more than the latest 20 points for download and the latest 20 for upload.
 - A cancelled or completed transfer must terminate its probe task promptly.
 - Loaded probes and transfer body processing must not block one another on a synchronous mutex.
 
-Upstream starts the loaded-latency engine after a 20 ms delay. The first probe starts then; subsequent probe starts are throttled by at least 400 ms. A transfer that ends before the delayed probe starts contributes no loaded-latency point.
+Upstream starts the group-scoped loaded-latency engine after a 20 ms delay. The first probe starts then; subsequent probe starts are throttled by at least 400 ms. A group that ends before the delayed probe starts contributes no loaded-latency point.
 
 ## 10. Packet loss
 

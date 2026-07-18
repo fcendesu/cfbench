@@ -293,7 +293,7 @@ Expected: compilation fails because the runner and probe coordinator do not exis
 
 Execute all 15 plan entries in order; replace the initial unloaded latency vector when the 20-packet phase completes; skip packet loss without I/O; track download/upload finish booleans independently; complete all requests in a group before evaluating `min_duration > 1000.0`; and keep successful prior points when a later request fails.
 
-For each bandwidth request, spawn one probe loop only when loaded latency is enabled. Delay first start by `20 ms`; after each probe completes wait until at least `400 ms` from its start; cancel and await the task when transfer completes or fails. Buffer its points locally, then associate them with the payload-size group. Retain the group's points only if all its successful transfers have adjusted durations `>= 250 ms`; trim direction results to the latest 20. Probe failures add diagnostics but do not fail an otherwise successful transfer.
+For each payload-size group, spawn one probe loop only when loaded latency is enabled. Delay first start by `20 ms`; keep the loop active across every sequential transfer in that group; after each probe completes wait until at least `400 ms` from its start. Cancel and await the task when the whole group completes or fails. Buffer its points locally, then associate them with the payload-size group. Retain the group's points only if all its successful transfers have adjusted durations `>= 250 ms`; the bounded result model trims each direction to the latest 20. Probe failures add diagnostics but do not fail an otherwise successful transfer.
 
 - [ ] **Step 4: Verify GREEN and task shutdown**
 

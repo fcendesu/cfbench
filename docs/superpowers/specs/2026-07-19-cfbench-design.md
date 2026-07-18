@@ -232,15 +232,15 @@ An alternative is a reusable `Bytes` buffer for small groups and a stream for la
 
 ## 9. Loaded-latency coordination
 
-A loaded transfer and its probes share a cancellation token scoped to that request.
+A payload-size group and its probes share a cancellation token scoped to that group.
 
 Conceptual flow:
 
 ```text
-create request token
+create group token
 spawn loaded probe loop
-run transfer
-cancel request token
+run every sequential transfer in the group
+cancel group token
 await probe loop shutdown
 if every transfer duration in the payload-size group >= 250 ms:
     retain qualifying probe points
@@ -266,6 +266,7 @@ For each bandwidth group:
 - skip when its direction is disabled;
 - skip when its direction is finished;
 - execute up to `count` requests;
+- keep one loaded-latency probe loop active across the group's sequential requests;
 - append successful points and record failures;
 - after completing every request in a group, mark its direction finished when the group's minimum adjusted duration is strictly greater than 1000 ms and the group does not bypass the finish gate;
 - continue with the next plan step, including the opposite direction.
