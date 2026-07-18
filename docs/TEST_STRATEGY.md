@@ -106,6 +106,10 @@ They must never be required for ordinary CI because they consume data and depend
 5. Non-finite values are rejected before reduction.
 6. The percentile algorithm matches upstream fixtures exactly.
 
+The Task 1 deterministic fixtures additionally cover invalid percentile
+fractions, non-finite rejection, measurement-order-sensitive jitter, and zero
+jitter for identical consecutive values.
+
 ### Timing
 
 1. Server time is subtracted from TTFB and transfer duration.
@@ -122,6 +126,10 @@ They must never be required for ordinary CI because they consume data and depend
 4. A group with any request at or below 1000 ms does not finish the direction.
 5. Disabled download/upload groups are skipped without corrupting ordering.
 6. The packet-loss slot produces an unavailable result without network activity.
+
+The static plan compatibility fixture runs before scheduler implementation and
+pins the upstream commit, all 15 ordered entries, configuration defaults, and
+filtering of both transfer directions while retaining packet-loss metadata.
 
 ### Streaming and memory
 

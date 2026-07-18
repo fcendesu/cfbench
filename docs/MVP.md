@@ -85,6 +85,13 @@ The MVP prioritizes measurement correctness, transparent limitations, determinis
 
 Packet loss remains in the upstream sequence for traceability but is skipped by the MVP runner with an explicit unsupported result.
 
+The default schedule is exposed as a versioned `MeasurementPlan` derived from
+a compile-time fixture. `MeasurementPlan::for_config` creates the run-specific
+view without mutating the baseline: disabled download or upload steps are
+removed, while latency and packet-loss metadata retain their source order. The
+default `RunConfig` uses automatic IP-family selection, enables both transfer
+directions and loaded latency, and applies a 30-second per-request timeout.
+
 | Order | Type | Payload / packets | Count | MVP behavior |
 |---:|---|---:|---:|---|
 | 1 | Latency | 0 B | 1 | Run initial estimate |
@@ -112,6 +119,10 @@ Given working Internet access, `cfbench` runs without required arguments and pri
 ### AC-2: schedule fidelity
 
 A deterministic scheduler test confirms that the exact table above is used and that later same-direction groups are skipped after all requests in a group complete with a minimum adjusted duration strictly greater than 1000 ms.
+
+The static compatibility test also pins the upstream commit, all 15 plan
+entries, direction filtering, and the initial bypass flag independently of the
+runner state-machine tests.
 
 ### AC-3: streaming downloads
 

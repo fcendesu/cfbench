@@ -120,11 +120,25 @@ pub enum IpMode {
     V6Only,
 }
 
+pub struct RunConfig {
+    pub ip_mode: IpMode,
+    pub request_timeout: Duration,
+    pub no_download: bool,
+    pub no_upload: bool,
+    pub no_loaded_latency: bool,
+}
+
 pub enum MeasurementStep {
     Latency { packets: u32 },
     Download { bytes: u64, count: u32, bypass_finish: bool },
     Upload { bytes: u64, count: u32, bypass_finish: bool },
     PacketLossUnsupported { packets: u32 },
+}
+
+pub struct MeasurementPlan {
+    pub upstream_version: &'static str,
+    pub upstream_commit: &'static str,
+    pub steps: Vec<MeasurementStep>,
 }
 
 pub struct TimingObservation {
@@ -148,6 +162,12 @@ pub struct BandwidthPoint {
 ```
 
 Concrete names may change during implementation, but boundaries and responsibilities should remain.
+
+The Task 1 implementation uses these concrete names. The default plan copies a
+compile-time 15-step fixture into an owned plan so configuration filtering can
+produce a separate ordered plan without changing the source baseline. The
+default request timeout is 30 seconds. Transfer steps expose their `Direction`;
+latency and unsupported packet-loss steps have no transfer direction.
 
 ## 5. Data flow
 
@@ -260,6 +280,10 @@ Statistics accept only finite validated `f64` values.
 
 Port the exact upstream percentile/reduction algorithm after source inspection. Do not assume a library percentile function is equivalent because interpolation and index selection vary.
 
+The pinned implementation sorts finite inputs with `f64::total_cmp` and uses
+linear interpolation at `(len - 1) * fraction`. Empty input, non-finite values,
+and fractions outside the inclusive range `0..=1` return `None`.
+
 ### Jitter
 
 For points in measurement order:
@@ -267,6 +291,8 @@ For points in measurement order:
 ```text
 sum(abs(points[i] - points[i-1])) / (len(points) - 1)
 ```
+
+Fewer than two points or any non-finite point returns `None`.
 
 ### Bandwidth eligibility
 

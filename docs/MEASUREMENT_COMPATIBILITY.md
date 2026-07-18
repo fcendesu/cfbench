@@ -54,6 +54,14 @@ download      bytes=250000000    count=2
 
 The runner preserves this order. The packet-loss entry is skipped in the MVP but remains represented in plan metadata.
 
+The native baseline is encoded in `src/plan.rs` as a 15-entry compile-time
+fixture with the upstream version and commit stored alongside it. Runtime
+configuration derives a filtered plan from that fixture: disabling download or
+upload removes only steps in that direction and preserves the relative order of
+latency and unsupported packet-loss metadata steps. The compatibility fixture
+in `tests/plan_compatibility.rs` compares every entry, including the initial
+100 KB download's finish-gate bypass.
+
 ## 4. Configuration constants
 
 | Setting | Value | Compatibility |
@@ -143,6 +151,8 @@ A latency point is `adjusted_ping_ms` from the native timing model.
 - Loaded latency: the same latency percentile over retained loaded points.
 - Jitter: arithmetic mean of `abs(point[i] - point[i-1])` for consecutive points.
 - Jitter is unavailable when fewer than two points exist.
+- Jitter is also unavailable when any input point is non-finite; the
+  calculation otherwise preserves measurement order.
 
 The initial one-packet latency estimate is replaced when the later 20-packet latency phase begins. Public unloaded points and reductions therefore use the 20-packet set; the initial estimate is not retained in the final result.
 
@@ -171,6 +181,9 @@ The initial one-packet latency estimate is replaced when the later 20-packet lat
 - A group marks a direction finished only after all requests in that group complete and the minimum adjusted duration across the group is strictly greater than 1000 ms, unless that group has `bypass_finish=true`.
 - Once a direction is finished, later groups in that direction are skipped; interleaved groups in the other direction continue.
 - Percentiles use the pinned upstream sorted linear-interpolation algorithm at index `(len - 1) * percentile`; fixture tests must keep this behavior exact.
+- Empty input, an out-of-range or non-finite percentile fraction, or any
+  non-finite input value produces an unavailable reduction rather than a
+  partial or non-finite result.
 
 ## 9. Loaded latency
 

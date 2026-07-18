@@ -1,0 +1,12 @@
+[package]
+name = "cfbench"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.95"
+description = "An unofficial native Cloudflare-compatible speed test CLI"
+license = "MIT"
+repository = "https://github.com/fcendesu/cfbench"
+keywords = ["cloudflare", "network", "speedtest", "cli"]
+categories = ["command-line-utilities", "network-programming"]
+
+[dependencies]
