@@ -3,6 +3,8 @@ use serde::ser::Serializer;
 
 use crate::plan::Direction;
 
+const MAX_LOADED_LATENCY_POINTS: usize = 20;
+
 /// One finite native latency observation.
 #[derive(Clone, Debug, Serialize)]
 pub struct LatencyPoint {
@@ -37,6 +39,57 @@ where
     })
 }
 
+/// A bounded, measurement-ordered collection of loaded-latency points.
+///
+/// Pushing beyond the compatibility limit evicts the oldest point, so every
+/// consumer (including serialization) observes at most the latest 20 points.
+#[derive(Clone, Debug, Default, Serialize)]
+#[serde(transparent)]
+pub struct LoadedLatencyPoints {
+    points: Vec<LatencyPoint>,
+}
+
+impl LoadedLatencyPoints {
+    pub fn push(&mut self, point: LatencyPoint) {
+        if self.points.len() == MAX_LOADED_LATENCY_POINTS {
+            self.points.remove(0);
+        }
+        self.points.push(point);
+    }
+
+    pub fn extend<I>(&mut self, points: I)
+    where
+        I: IntoIterator<Item = LatencyPoint>,
+    {
+        for point in points {
+            self.push(point);
+        }
+    }
+
+    pub fn as_slice(&self) -> &[LatencyPoint] {
+        &self.points
+    }
+
+    pub fn len(&self) -> usize {
+        self.points.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.points.is_empty()
+    }
+}
+
+impl FromIterator<LatencyPoint> for LoadedLatencyPoints {
+    fn from_iter<I>(points: I) -> Self
+    where
+        I: IntoIterator<Item = LatencyPoint>,
+    {
+        let mut retained = Self::default();
+        retained.extend(points);
+        retained
+    }
+}
+
 /// Raw successful points retained by a run.
 #[derive(Clone, Debug, Default, Serialize)]
 pub struct RawResults {
@@ -46,6 +99,6 @@ pub struct RawResults {
     pub latency: Vec<LatencyPoint>,
     pub download: Vec<BandwidthPoint>,
     pub upload: Vec<BandwidthPoint>,
-    pub download_loaded_latency: Vec<LatencyPoint>,
-    pub upload_loaded_latency: Vec<LatencyPoint>,
+    pub download_loaded_latency: LoadedLatencyPoints,
+    pub upload_loaded_latency: LoadedLatencyPoints,
 }

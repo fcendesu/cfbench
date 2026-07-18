@@ -75,7 +75,7 @@ fn reducer_uses_later_unloaded_phase_only() {
 fn reducer_keeps_loaded_directions_separate_and_latest_twenty() {
     let raw = RawResults {
         download_loaded_latency: (1..=21).map(|value| latency(value as f64)).collect(),
-        upload_loaded_latency: vec![latency(100.0), latency(120.0)],
+        upload_loaded_latency: [latency(100.0), latency(120.0)].into_iter().collect(),
         ..RawResults::default()
     };
 
@@ -104,4 +104,11 @@ fn conversion_rejects_non_finite_millisecond_inputs() {
     let observation = TimingObservation::from_millis(f64::NAN, 100.0, 10.0, 1_000, "HTTP/2");
 
     assert!(latency_point(observation).is_err());
+}
+
+#[test]
+fn conversion_rejects_bps_at_exclusive_two_to_the_sixty_four_boundary() {
+    let observation = TimingObservation::from_millis(0.0, 1_005.0, 0.0, 1_u64 << 61, "HTTP/2");
+
+    assert!(bandwidth_point(Direction::Download, 1_u64 << 61, observation).is_err());
 }

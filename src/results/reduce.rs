@@ -4,13 +4,11 @@ use crate::statistics::{jitter, percentile};
 use super::{BandwidthPoint, LatencyPoint, RawResults, Summary};
 
 const MIN_BANDWIDTH_DURATION_MS: f64 = 10.0;
-const MAX_LOADED_LATENCY_POINTS: usize = 20;
-
 /// Reduces raw points according to the pinned Cloudflare-compatible rules.
 pub fn reduce(raw: &RawResults) -> Summary {
     let unloaded = latency_values(&raw.latency);
-    let download_loaded = latest_latency_values(&raw.download_loaded_latency);
-    let upload_loaded = latest_latency_values(&raw.upload_loaded_latency);
+    let download_loaded = latency_values(raw.download_loaded_latency.as_slice());
+    let upload_loaded = latency_values(raw.upload_loaded_latency.as_slice());
 
     Summary {
         unloaded_latency_ms: percentile(&unloaded, 0.5),
@@ -35,11 +33,6 @@ fn latency_values(points: &[LatencyPoint]) -> Vec<f64> {
     }
 
     points.iter().map(|point| point.ping_ms).collect()
-}
-
-fn latest_latency_values(points: &[LatencyPoint]) -> Vec<f64> {
-    let start = points.len().saturating_sub(MAX_LOADED_LATENCY_POINTS);
-    latency_values(&points[start..])
 }
 
 fn bandwidth(points: &[BandwidthPoint], direction: Direction) -> Option<u64> {

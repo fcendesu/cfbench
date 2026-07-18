@@ -1,6 +1,15 @@
 use cfbench::measurement::{TimingObservation, bandwidth_point};
 use cfbench::plan::Direction;
-use cfbench::results::RunResult;
+use cfbench::results::{LatencyPoint, RawResults, RunResult};
+
+fn latency(ping_ms: f64) -> LatencyPoint {
+    LatencyPoint {
+        ping_ms,
+        ttfb_ms: ping_ms + 10.0,
+        server_time_ms: 10.0,
+        http_version: Some("HTTP/2".to_owned()),
+    }
+}
 
 #[test]
 fn unavailable_packet_loss_is_explicit() {
@@ -39,4 +48,25 @@ fn bandwidth_json_preserves_actual_payload_bytes() {
     assert_eq!(value["requested_bytes"], 1_000_000);
     assert_eq!(value["payload_bytes"], 999_983);
     assert_eq!(value["bps"], 80_398_633);
+}
+
+#[test]
+fn loaded_latency_serialization_retains_only_latest_twenty_points() {
+    let raw = RawResults {
+        download_loaded_latency: (1..=21).map(|value| latency(value as f64)).collect(),
+        ..RawResults::default()
+    };
+
+    let value = serde_json::to_value(raw).unwrap();
+    let retained = value["download_loaded_latency"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|point| point["ping_ms"].as_f64().unwrap())
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        retained,
+        (2..=21).map(|value| value as f64).collect::<Vec<_>>()
+    );
 }

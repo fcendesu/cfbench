@@ -1,11 +1,13 @@
-use std::fmt;
 use std::time::Duration;
+
+use thiserror::Error;
 
 use crate::plan::Direction;
 use crate::results::{BandwidthPoint, LatencyPoint};
 
 const TRANSFER_OVERHEAD_FACTOR: f64 = 1.005;
 const MIN_ADJUSTED_DURATION_MS: f64 = 0.01;
+const U64_EXCLUSIVE_UPPER_BOUND: f64 = 18_446_744_073_709_551_616.0;
 
 /// Monotonic timing boundaries and payload accounting returned by a transport.
 #[derive(Clone, Debug)]
@@ -73,22 +75,13 @@ fn duration_from_millis(milliseconds: f64) -> Option<Duration> {
 }
 
 /// A raw observation could not be represented as a finite result point.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
 pub enum MeasurementConversionError {
+    #[error("timing observation is invalid")]
     InvalidTiming,
+    #[error("computed bandwidth is invalid")]
     InvalidBandwidth,
 }
-
-impl fmt::Display for MeasurementConversionError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::InvalidTiming => formatter.write_str("timing observation is invalid"),
-            Self::InvalidBandwidth => formatter.write_str("computed bandwidth is invalid"),
-        }
-    }
-}
-
-impl std::error::Error for MeasurementConversionError {}
 
 /// Converts a transport observation into a validated latency point.
 pub fn latency_point(
@@ -126,7 +119,7 @@ pub fn bandwidth_point(
     let adjusted = adjusted_duration.as_secs_f64();
     let bps =
         ((observation.payload_bytes as f64 * TRANSFER_OVERHEAD_FACTOR * 8.0) / adjusted).round();
-    if !bps.is_finite() || !(0.0..=u64::MAX as f64).contains(&bps) {
+    if !bps.is_finite() || !(0.0..U64_EXCLUSIVE_UPPER_BOUND).contains(&bps) {
         return Err(MeasurementConversionError::InvalidBandwidth);
     }
 
