@@ -8,6 +8,14 @@ use cfbench::transport::ReqwestTransport;
 use support::{FixtureServer, ResponsePlan};
 use tokio_util::sync::CancellationToken;
 
+#[test]
+fn reqwest_http2_client_capability_is_compiled() {
+    reqwest::Client::builder()
+        .http2_adaptive_window(true)
+        .build()
+        .expect("HTTP/2-capable reqwest client");
+}
+
 fn config(ip_mode: IpMode, timeout: Duration) -> RunConfig {
     RunConfig {
         ip_mode,
@@ -111,13 +119,51 @@ async fn distinguishes_header_and_body_timeouts() {
 async fn cancellation_preempts_waiting_for_headers() {
     let server = FixtureServer::start(ResponsePlan::DelayHeaders).await;
     let token = CancellationToken::new();
+    let transport = transport_for(&server, IpMode::V4Only, Duration::from_secs(30));
+    let task_token = token.clone();
+    let task = tokio::spawn(async move { transport.latency(&task_token).await });
+    server.wait_until_stalled().await;
     token.cancel();
-    assert!(matches!(
-        transport_for(&server, IpMode::V4Only, Duration::from_secs(1))
-            .latency(&token)
-            .await,
-        Err(TransportError::Cancelled)
-    ));
+
+    let result = tokio::time::timeout(Duration::from_millis(250), task)
+        .await
+        .expect("header cancellation completes promptly")
+        .expect("transport task joins");
+    assert!(matches!(result, Err(TransportError::Cancelled)));
+}
+
+#[tokio::test]
+async fn cancellation_preempts_stalled_download_body() {
+    let server = FixtureServer::start(ResponsePlan::StallBody).await;
+    let token = CancellationToken::new();
+    let transport = transport_for(&server, IpMode::V4Only, Duration::from_secs(30));
+    let task_token = token.clone();
+    let task = tokio::spawn(async move { transport.download(1, None, &task_token).await });
+    server.wait_until_stalled().await;
+    token.cancel();
+
+    let result = tokio::time::timeout(Duration::from_millis(250), task)
+        .await
+        .expect("download cancellation completes promptly")
+        .expect("transport task joins");
+    assert!(matches!(result, Err(TransportError::Cancelled)));
+}
+
+#[tokio::test]
+async fn cancellation_preempts_stalled_upload_response_body() {
+    let server = FixtureServer::start(ResponsePlan::StallUploadResponse).await;
+    let token = CancellationToken::new();
+    let transport = transport_for(&server, IpMode::V4Only, Duration::from_secs(30));
+    let task_token = token.clone();
+    let task = tokio::spawn(async move { transport.upload(150_000, &task_token).await });
+    server.wait_until_stalled().await;
+    token.cancel();
+
+    let result = tokio::time::timeout(Duration::from_millis(250), task)
+        .await
+        .expect("upload cancellation completes promptly")
+        .expect("transport task joins");
+    assert!(matches!(result, Err(TransportError::Cancelled)));
 }
 
 #[tokio::test]

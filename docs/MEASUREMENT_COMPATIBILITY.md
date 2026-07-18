@@ -123,11 +123,11 @@ For large transfers, response-header overhead is negligible; it can matter more 
 
 The parser must:
 
-- accept multiple comma-separated metrics;
-- accept optional whitespace;
-- read a duration expressed with `dur=<number>`;
-- use the metric intended by Cloudflare when recognizable;
-- ignore malformed and non-finite values;
+- inspect the combined header string using the pinned upstream search semantics;
+- select the first decimal token matching `(?:^|;)\s*dur=([0-9.]+)`, regardless of metric name;
+- accept optional whitespace after the start or semicolon boundary;
+- preserve the upstream decimal-prefix behavior, so `dur=1e3` captures `1`;
+- reject malformed or non-finite captured values;
 - fall back to 10 ms if no valid server duration is found;
 - clamp adjusted durations at zero or a small positive epsilon to prevent negative latency and division by zero.
 

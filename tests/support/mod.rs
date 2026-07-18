@@ -5,6 +5,7 @@ use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::Mutex;
+use tokio::sync::Notify;
 
 #[derive(Clone)]
 pub enum ResponsePlan {
@@ -20,12 +21,14 @@ pub enum ResponsePlan {
     },
     DelayHeaders,
     StallBody,
+    StallUploadResponse,
     UploadEcho,
 }
 
 pub struct FixtureServer {
     address: SocketAddr,
     uploads: Arc<Mutex<Vec<UploadRequest>>>,
+    reached_stall: Arc<Notify>,
     task: tokio::task::JoinHandle<()>,
 }
 
@@ -44,6 +47,8 @@ impl FixtureServer {
         let address = listener.local_addr().expect("fixture address");
         let uploads = Arc::new(Mutex::new(Vec::new()));
         let captured = uploads.clone();
+        let reached_stall = Arc::new(Notify::new());
+        let server_reached_stall = reached_stall.clone();
         let task = tokio::spawn(async move {
             loop {
                 let Ok((socket, _)) = listener.accept().await else {
@@ -51,14 +56,16 @@ impl FixtureServer {
                 };
                 let plan = plan.clone();
                 let captured = captured.clone();
+                let reached_stall = server_reached_stall.clone();
                 tokio::spawn(async move {
-                    let _ = serve(socket, plan, captured).await;
+                    let _ = serve(socket, plan, captured, reached_stall).await;
                 });
             }
         });
         Self {
             address,
             uploads,
+            reached_stall,
             task,
         }
     }
@@ -69,6 +76,10 @@ impl FixtureServer {
 
     pub async fn uploads(&self) -> Vec<UploadRequest> {
         self.uploads.lock().await.clone()
+    }
+
+    pub async fn wait_until_stalled(&self) {
+        self.reached_stall.notified().await;
     }
 }
 
@@ -82,16 +93,38 @@ async fn serve(
     mut socket: TcpStream,
     plan: ResponsePlan,
     uploads: Arc<Mutex<Vec<UploadRequest>>>,
+    reached_stall: Arc<Notify>,
 ) -> io::Result<()> {
     let (headers, initial_body) = read_request(&mut socket).await?;
     match plan {
         ResponsePlan::DelayHeaders => {
+            reached_stall.notify_one();
             std::future::pending::<()>().await;
         }
         ResponsePlan::StallBody => {
             socket
                 .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 1\r\n\r\n")
                 .await?;
+            reached_stall.notify_one();
+            std::future::pending::<()>().await;
+        }
+        ResponsePlan::StallUploadResponse => {
+            let content_length = header(&headers, "content-length")
+                .and_then(|value| value.parse::<usize>().ok())
+                .unwrap_or_default();
+            let mut body_bytes = initial_body.len();
+            let mut buffer = [0_u8; 8192];
+            while body_bytes < content_length {
+                let read = socket.read(&mut buffer).await?;
+                if read == 0 {
+                    break;
+                }
+                body_bytes += read;
+            }
+            socket
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 1\r\n\r\n")
+                .await?;
+            reached_stall.notify_one();
             std::future::pending::<()>().await;
         }
         ResponsePlan::UploadEcho => {
