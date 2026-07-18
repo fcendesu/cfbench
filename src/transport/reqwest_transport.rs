@@ -1,3 +1,4 @@
+use std::future::Future;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::time::{Duration, Instant};
 
@@ -180,15 +181,26 @@ impl ReqwestTransport {
         response: &mut Response,
         cancellation: &CancellationToken,
     ) -> Result<Option<bytes::Bytes>, TransportError> {
-        tokio::select! {
-            biased;
-            () = cancellation.cancelled() => Err(TransportError::Cancelled),
-            result = tokio::time::timeout(self.request_timeout, response.chunk()) => {
-                match result {
-                    Err(_) => Err(TransportError::BodyTimeout),
-                    Ok(Err(error)) => Err(TransportError::BodyStream(error)),
-                    Ok(Ok(chunk)) => Ok(chunk),
-                }
+        poll_body_chunk(response.chunk(), self.request_timeout, cancellation).await
+    }
+}
+
+async fn poll_body_chunk<F>(
+    body_chunk: F,
+    timeout: Duration,
+    cancellation: &CancellationToken,
+) -> Result<Option<bytes::Bytes>, TransportError>
+where
+    F: Future<Output = reqwest::Result<Option<bytes::Bytes>>>,
+{
+    tokio::select! {
+        biased;
+        () = cancellation.cancelled() => Err(TransportError::Cancelled),
+        result = tokio::time::timeout(timeout, body_chunk) => {
+            match result {
+                Err(_) => Err(TransportError::BodyTimeout),
+                Ok(Err(error)) => Err(TransportError::BodyStream(error)),
+                Ok(Ok(chunk)) => Ok(chunk),
             }
         }
     }
@@ -207,4 +219,38 @@ fn validate_response(response: Response) -> Result<(Response, Duration, String),
     );
     let version = format!("{:?}", response.version());
     Ok((response, duration, version))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::future;
+    use std::sync::Arc;
+
+    use tokio::sync::Notify;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn cancellation_preempts_an_actively_polled_body_future() {
+        let entered_body_poll = Arc::new(Notify::new());
+        let body_signal = entered_body_poll.clone();
+        let cancellation = CancellationToken::new();
+        let task_cancellation = cancellation.clone();
+        let body_future = async move {
+            body_signal.notify_one();
+            future::pending::<reqwest::Result<Option<bytes::Bytes>>>().await
+        };
+
+        let task = tokio::spawn(async move {
+            poll_body_chunk(body_future, Duration::from_secs(30), &task_cancellation).await
+        });
+        entered_body_poll.notified().await;
+        cancellation.cancel();
+
+        let result = tokio::time::timeout(Duration::from_millis(250), task)
+            .await
+            .expect("active body cancellation completes promptly")
+            .expect("body poll task joins");
+        assert!(matches!(result, Err(TransportError::Cancelled)));
+    }
 }
