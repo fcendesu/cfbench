@@ -14,5 +14,6 @@ pub fn percentile(values: &[f64], fraction: f64) -> Option<f64> {
     let lower = index.floor() as usize;
     let upper = index.ceil() as usize;
 
-    Some(sorted[lower] + (sorted[upper] - sorted[lower]) * index.fract())
+    let result = sorted[lower] + (sorted[upper] - sorted[lower]) * index.fract();
+    result.is_finite().then_some(result)
 }

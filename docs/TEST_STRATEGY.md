@@ -108,7 +108,8 @@ They must never be required for ordinary CI because they consume data and depend
 
 The Task 1 deterministic fixtures additionally cover invalid percentile
 fractions, non-finite rejection, measurement-order-sensitive jitter, and zero
-jitter for identical consecutive values.
+jitter for identical consecutive values. Finite extreme-value fixtures verify
+that overflow cannot escape as a non-finite summary.
 
 ### Timing
 

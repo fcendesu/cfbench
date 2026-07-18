@@ -16,6 +16,11 @@ fn percentile_rejects_non_finite_values_and_invalid_fractions() {
 }
 
 #[test]
+fn percentile_rejects_non_finite_computed_result() {
+    assert_eq!(percentile(&[-f64::MAX, f64::MAX], 0.5), None);
+}
+
+#[test]
 fn jitter_requires_two_finite_points() {
     assert_eq!(jitter(&[10.0]), None);
     assert_eq!(jitter(&[10.0, 14.0, 12.0]), Some(3.0));
@@ -26,4 +31,9 @@ fn jitter_requires_two_finite_points() {
 fn jitter_preserves_measurement_order() {
     assert_eq!(jitter(&[1.0, 5.0, 2.0, 8.0]), Some(13.0 / 3.0));
     assert_eq!(jitter(&[4.0, 4.0]), Some(0.0));
+}
+
+#[test]
+fn jitter_rejects_non_finite_computed_result() {
+    assert_eq!(jitter(&[f64::MAX, -f64::MAX]), None);
 }

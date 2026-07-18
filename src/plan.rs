@@ -28,6 +28,7 @@ pub enum MeasurementStep {
     },
     PacketLossUnsupported {
         packets: u32,
+        responses_wait_ms: u32,
     },
 }
 
@@ -98,7 +99,10 @@ const DEFAULT_CLOUDFLARE_STEPS: [MeasurementStep; 15] = [
         count: 8,
         bypass_finish: false,
     },
-    MeasurementStep::PacketLossUnsupported { packets: 1_000 },
+    MeasurementStep::PacketLossUnsupported {
+        packets: 1_000,
+        responses_wait_ms: 3_000,
+    },
     MeasurementStep::Upload {
         bytes: 1_000_000,
         count: 6,

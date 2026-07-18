@@ -132,7 +132,7 @@ pub enum MeasurementStep {
     Latency { packets: u32 },
     Download { bytes: u64, count: u32, bypass_finish: bool },
     Upload { bytes: u64, count: u32, bypass_finish: bool },
-    PacketLossUnsupported { packets: u32 },
+    PacketLossUnsupported { packets: u32, responses_wait_ms: u32 },
 }
 
 pub struct MeasurementPlan {
@@ -282,7 +282,8 @@ Port the exact upstream percentile/reduction algorithm after source inspection. 
 
 The pinned implementation sorts finite inputs with `f64::total_cmp` and uses
 linear interpolation at `(len - 1) * fraction`. Empty input, non-finite values,
-and fractions outside the inclusive range `0..=1` return `None`.
+fractions outside the inclusive range `0..=1`, and non-finite computed results
+return `None`.
 
 ### Jitter
 
@@ -292,7 +293,8 @@ For points in measurement order:
 sum(abs(points[i] - points[i-1])) / (len(points) - 1)
 ```
 
-Fewer than two points or any non-finite point returns `None`.
+Fewer than two points, any non-finite point, or a non-finite computed result
+returns `None`.
 
 ### Bandwidth eligibility
 

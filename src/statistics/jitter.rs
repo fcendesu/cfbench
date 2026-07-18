@@ -9,5 +9,6 @@ pub fn jitter(values: &[f64]) -> Option<f64> {
         .map(|pair| (pair[1] - pair[0]).abs())
         .sum::<f64>();
 
-    Some(total_difference / (values.len() - 1) as f64)
+    let result = total_difference / (values.len() - 1) as f64;
+    result.is_finite().then_some(result)
 }

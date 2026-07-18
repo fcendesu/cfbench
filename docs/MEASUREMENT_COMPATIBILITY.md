@@ -184,6 +184,8 @@ The initial one-packet latency estimate is replaced when the later 20-packet lat
 - Empty input, an out-of-range or non-finite percentile fraction, or any
   non-finite input value produces an unavailable reduction rather than a
   partial or non-finite result.
+- A non-finite computed result, including intermediate overflow from finite
+  extreme inputs, is also unavailable.
 
 ## 9. Loaded latency
 
