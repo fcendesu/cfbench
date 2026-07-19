@@ -1,6 +1,10 @@
+#![allow(dead_code)]
+
 use std::io;
 use std::net::{Ipv4Addr, SocketAddr};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::Duration;
 
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
@@ -9,6 +13,7 @@ use tokio::sync::Notify;
 
 #[derive(Clone)]
 pub enum ResponsePlan {
+    CloudflareCompatible,
     Exact {
         status: u16,
         body_bytes: usize,
@@ -29,6 +34,7 @@ pub struct FixtureServer {
     address: SocketAddr,
     uploads: Arc<Mutex<Vec<UploadRequest>>>,
     reached_stall: Arc<Notify>,
+    unexpected_requests: Arc<AtomicUsize>,
     task: tokio::task::JoinHandle<()>,
 }
 
@@ -40,6 +46,10 @@ pub struct UploadRequest {
 }
 
 impl FixtureServer {
+    pub async fn cloudflare_compatible() -> Self {
+        Self::start(ResponsePlan::CloudflareCompatible).await
+    }
+
     pub async fn start(plan: ResponsePlan) -> Self {
         let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
             .await
@@ -49,6 +59,8 @@ impl FixtureServer {
         let captured = uploads.clone();
         let reached_stall = Arc::new(Notify::new());
         let server_reached_stall = reached_stall.clone();
+        let unexpected_requests = Arc::new(AtomicUsize::new(0));
+        let server_unexpected_requests = unexpected_requests.clone();
         let task = tokio::spawn(async move {
             loop {
                 let Ok((socket, _)) = listener.accept().await else {
@@ -57,8 +69,9 @@ impl FixtureServer {
                 let plan = plan.clone();
                 let captured = captured.clone();
                 let reached_stall = server_reached_stall.clone();
+                let unexpected_requests = server_unexpected_requests.clone();
                 tokio::spawn(async move {
-                    let _ = serve(socket, plan, captured, reached_stall).await;
+                    let _ = serve(socket, plan, captured, reached_stall, unexpected_requests).await;
                 });
             }
         });
@@ -66,6 +79,7 @@ impl FixtureServer {
             address,
             uploads,
             reached_stall,
+            unexpected_requests,
             task,
         }
     }
@@ -81,6 +95,10 @@ impl FixtureServer {
     pub async fn wait_until_stalled(&self) {
         self.reached_stall.notified().await;
     }
+
+    pub fn unexpected_requests(&self) -> usize {
+        self.unexpected_requests.load(Ordering::Relaxed)
+    }
 }
 
 impl Drop for FixtureServer {
@@ -94,9 +112,20 @@ async fn serve(
     plan: ResponsePlan,
     uploads: Arc<Mutex<Vec<UploadRequest>>>,
     reached_stall: Arc<Notify>,
+    unexpected_requests: Arc<AtomicUsize>,
 ) -> io::Result<()> {
     let (headers, initial_body) = read_request(&mut socket).await?;
     match plan {
+        ResponsePlan::CloudflareCompatible => {
+            serve_cloudflare_compatible(
+                &mut socket,
+                &headers,
+                initial_body,
+                uploads,
+                unexpected_requests,
+            )
+            .await?;
+        }
         ResponsePlan::DelayHeaders => {
             reached_stall.notify_one();
             std::future::pending::<()>().await;
@@ -183,6 +212,93 @@ async fn serve(
         }
     }
     Ok(())
+}
+
+async fn serve_cloudflare_compatible(
+    socket: &mut TcpStream,
+    headers: &str,
+    initial_body: Vec<u8>,
+    uploads: Arc<Mutex<Vec<UploadRequest>>>,
+    unexpected_requests: Arc<AtomicUsize>,
+) -> io::Result<()> {
+    let request_line = headers.lines().next().unwrap_or_default();
+    let mut parts = request_line.split_whitespace();
+    let method = parts.next().unwrap_or_default();
+    let target = parts.next().unwrap_or_default();
+
+    if method == "GET" && target.starts_with("/__down?bytes=") {
+        let bytes = target
+            .split('?')
+            .nth(1)
+            .and_then(|query| {
+                query.split('&').find_map(|pair| {
+                    let (key, value) = pair.split_once('=')?;
+                    (key == "bytes").then_some(value)
+                })
+            })
+            .and_then(|value| value.parse::<usize>().ok());
+        let Some(bytes) = bytes else {
+            unexpected_requests.fetch_add(1, Ordering::Relaxed);
+            return write_empty_response(socket, 400).await;
+        };
+        tokio::time::sleep(Duration::from_millis(15)).await;
+        let response = format!(
+            "HTTP/1.1 200 OK\r\nContent-Length: {bytes}\r\nServer-Timing: cfRequestDuration;dur=0\r\nConnection: close\r\n\r\n"
+        );
+        socket.write_all(response.as_bytes()).await?;
+        let chunk = [0_u8; 512];
+        let mut remaining = bytes;
+        while remaining > 0 {
+            let emitted = remaining.min(chunk.len());
+            socket.write_all(&chunk[..emitted]).await?;
+            remaining -= emitted;
+        }
+        return Ok(());
+    }
+
+    if method == "POST" && target == "/__up" {
+        let content_length = header(headers, "content-length")
+            .and_then(|value| value.parse::<usize>().ok())
+            .unwrap_or_default();
+        let mut body_bytes = initial_body.len();
+        let mut buffer = [0_u8; 8192];
+        while body_bytes < content_length {
+            let read = socket.read(&mut buffer).await?;
+            if read == 0 {
+                break;
+            }
+            body_bytes += read;
+        }
+        uploads.lock().await.push(UploadRequest {
+            body_bytes,
+            content_type: header(headers, "content-type").map(ToOwned::to_owned),
+            accept_encoding: header(headers, "accept-encoding").map(ToOwned::to_owned),
+        });
+        tokio::time::sleep(Duration::from_millis(15)).await;
+        socket
+            .write_all(
+                b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nServer-Timing: cfRequestDuration;dur=0\r\nConnection: close\r\n\r\nOK",
+            )
+            .await?;
+        return Ok(());
+    }
+
+    unexpected_requests.fetch_add(1, Ordering::Relaxed);
+    write_empty_response(socket, 404).await
+}
+
+async fn write_empty_response(socket: &mut TcpStream, status: u16) -> io::Result<()> {
+    let reason = if status == 400 {
+        "Bad Request"
+    } else {
+        "Not Found"
+    };
+    socket
+        .write_all(
+            format!("HTTP/1.1 {status} {reason}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                .as_bytes(),
+        )
+        .await
 }
 
 async fn read_request(socket: &mut TcpStream) -> io::Result<(String, Vec<u8>)> {

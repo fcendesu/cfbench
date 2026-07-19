@@ -65,6 +65,12 @@ The server must support:
 - hanging requests for timeout tests;
 - HTTP/1.1 and, where practical, HTTP/2.
 
+The release suite also includes a compact end-to-end plan that crosses the
+actual `Runner` and `ReqwestTransport` boundary against this fixture. It must
+produce reducible unloaded-latency, download, and upload summaries and record
+zero unexpected request shapes. The compatible fixture URL remains test-only;
+the public CLI does not expose an endpoint/provider flag.
+
 ### 2.4 CLI integration tests
 
 Run the compiled binary against the local fixture and assert:
@@ -94,6 +100,15 @@ They verify only broad invariants:
 - summary values are finite and positive when the direction is enabled.
 
 They must never be required for ordinary CI because they consume data and depend on external networking.
+
+The MVP live set is intentionally bounded to a zero-byte latency probe, an
+exact-size 65,536-byte download, and a 65,536-byte upload. Run it explicitly:
+
+```text
+cargo test --test live_cloudflare -- --ignored
+```
+
+No live test uses the default plan or requests the 250 MB download group.
 
 ## 3. Critical test cases
 
@@ -209,6 +224,10 @@ Additional release builds:
 - Windows x86_64 MSVC
 
 A musl build should be evaluated after TLS and DNS behavior are validated; it is not an MVP acceptance requirement.
+
+GitHub Actions runs tests and a release build on Ubuntu, macOS, and Windows.
+The Ubuntu job additionally enforces `cargo fmt --check` and Clippy with all
+warnings denied. Ignored live tests are compiled but are not executed in CI.
 
 ## 7. Static quality gates
 

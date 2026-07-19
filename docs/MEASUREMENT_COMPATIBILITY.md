@@ -274,6 +274,17 @@ Before publishing `0.1.0`:
 6. Run at least 20 paired native/browser tests across slow, medium, and fast connections when available.
 7. Record expected variance without defining browser output as an absolute oracle.
 
+Release integration coverage runs a compact immutable plan through `Runner`
+and the real `ReqwestTransport` against a local Cloudflare-compatible fixture.
+It covers unloaded latency plus reducible download and upload points without
+adding a public endpoint override. The fixture rejects unknown request shapes,
+so the test also detects unexpected network activity.
+
+Ignored live tests use only a zero-byte latency probe, a 65,536-byte download,
+and a 65,536-byte upload. They assert endpoint and finite-timing invariants
+rather than speed values. They are excluded from ordinary CI because public
+network tests consume resources and are inherently variable.
+
 ## 15. Primary references
 
 - <https://github.com/cloudflare/speedtest>
