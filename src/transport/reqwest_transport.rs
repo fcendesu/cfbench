@@ -353,8 +353,15 @@ mod tests {
     }
 
     #[test]
-    fn production_client_path_builds_with_retries_disabled() {
-        build_measurement_client(&RunConfig::default())
-            .expect("production reqwest client with retry::never policy");
+    fn production_client_builder_contains_exactly_one_explicit_no_retry_policy() {
+        let source = include_str!("reqwest_transport.rs");
+        let builder_body = source
+            .split_once("fn build_measurement_client")
+            .and_then(|(_, rest)| rest.split_once("\nasync fn poll_body_chunk"))
+            .map(|(body, _)| body)
+            .expect("locate only the production measurement-client builder body");
+        let no_retry_call = [".retry(reqwest::", "retry::never())"].concat();
+
+        assert_eq!(builder_body.matches(&no_retry_call).count(), 1);
     }
 }
