@@ -95,7 +95,13 @@ Each request records:
 - `response_headers_received`: when `send().await` returns a response;
 - `response_body_complete`: when the response body stream ends;
 - `server_time_ms`: parsed from the response `Server-Timing` header, otherwise 10 ms;
-- `payload_bytes`: actual body bytes read or intentionally uploaded.
+- `payload_bytes`: download body bytes actually received, or upload body bytes
+  yielded to reqwest. Yielded upload bytes are the closest native observable
+  boundary and do not prove remote acceptance.
+
+The configured timeout is one absolute deadline spanning request send,
+response headers, and every response-body chunk. It does not restart when a
+header or chunk arrives. Failures retain partial payload accounting.
 
 Derived values:
 
@@ -128,7 +134,8 @@ For large transfers, response-header overhead is negligible; it can matter more 
 
 The parser must:
 
-- inspect the combined header string using the pinned upstream search semantics;
+- combine every `Server-Timing` field value in wire order with commas, then
+  inspect the combined string using the pinned upstream search semantics;
 - select the first decimal token matching `(?:^|;)\s*dur=([0-9.]+)`, regardless of metric name;
 - accept optional whitespace after the start or semicolon boundary;
 - preserve the upstream decimal-prefix behavior, so `dur=1e3` captures `1`;
@@ -177,7 +184,8 @@ The initial one-packet latency estimate is replaced when the later 20-packet lat
 - Use a reusable or streaming body source to prevent repeated payload-sized allocation.
 - Start timer immediately before sending.
 - Stop after the response body is complete.
-- Treat the configured payload count as uploaded payload bytes.
+- Count bytes as the bounded upload stream yields them to reqwest; a successful
+  upload must yield the configured payload count exactly.
 
 ### Inclusion and reduction
 
@@ -234,6 +242,9 @@ The upstream schedule already begins with latency and a bypassed 100 KB download
 
 - Auto mode uses normal resolution and connection behavior.
 - IPv4-only and IPv6-only modes must prevent fallback to the other family.
+- Forced-family clients disable system proxies because proxy resolution and
+  connection establishment cannot guarantee the requested target family.
+  Auto mode retains reqwest's standard proxy behavior.
 - The implementation may need a custom resolver or connector if `local_address` alone cannot guarantee family selection on every platform.
 - Integration tests should verify the connector behavior; do not infer the family only from a CLI flag.
 

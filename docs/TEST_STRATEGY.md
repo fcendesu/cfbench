@@ -73,10 +73,13 @@ the public CLI does not expose an endpoint/provider flag.
 
 ### 2.4 CLI integration tests
 
-Run the compiled binary against the local fixture and assert:
+Process-level CLI tests cover parser, help, version, invalid flags, and exit
+code `2` for argument errors. Because the MVP intentionally has no endpoint
+override, runtime network output is tested at the app boundary rather than by
+pointing the compiled binary at a local fixture.
 
-- help and version behavior;
-- mutually exclusive IP-family flags;
+App-boundary tests assert:
+
 - JSON-only stdout;
 - progress on stderr;
 - quiet mode;
@@ -84,7 +87,8 @@ Run the compiled binary against the local fixture and assert:
 - partial result behavior;
 - no ANSI cursor-control sequences.
 
-Suggested crate: `assert_cmd` with `predicates`, or standard `std::process::Command` if dependency count should remain lower.
+The compiled-binary tests use `assert_cmd`; app-boundary tests use in-memory
+writers and scripted transports.
 
 ### 2.5 Live tests
 
@@ -260,6 +264,22 @@ Track:
 
 The tool is a network benchmark, so client-side CPU or output overhead must not become the limiting factor on common gigabit hardware.
 
+An ignored local test streams the full 250,000,000-byte response using 64 KiB
+fixture chunks without allocating a payload-sized body. Run it explicitly under
+a platform memory tool, for example:
+
+```text
+# Linux
+/usr/bin/time -v cargo test --release --test transport local_250_mb_download_streams_in_bounded_chunks -- --ignored --exact
+
+# macOS
+/usr/bin/time -l cargo test --release --test transport local_250_mb_download_streams_in_bounded_chunks -- --ignored --exact
+```
+
+Passing the test proves exact streaming byte count, not a peak-memory bound;
+record the tool's maximum resident-set output separately. That measurement is
+outstanding for `0.1.0` release validation.
+
 ## 9. Upstream parity workflow
 
 At each Cloudflare Speedtest release:
@@ -281,3 +301,15 @@ A release candidate should include:
 - memory measurement for the largest download group;
 - a small set of paired browser/native observations;
 - known differences and unsupported features.
+
+Current evidence status:
+
+- upstream baseline and deterministic compatibility fixtures: available;
+- local unit, integration, and release builds on the development host: available;
+- executed Ubuntu/macOS/Windows CI matrix: outstanding until the workflow runs;
+- peak-memory measurement for the ignored 250 MB fixture: outstanding;
+- paired browser/native observations: outstanding;
+- live default-plan and loaded-latency evidence: outstanding.
+
+The repository must not be described as `0.1.0` release-ready until the
+outstanding release evidence is collected and reviewed.

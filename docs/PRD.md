@@ -1,6 +1,6 @@
 # Product Requirements Document: cfbench
 
-- Status: Draft for implementation
+- Status: Implemented; release validation pending
 - Date: 2026-07-19
 - Product: `cfbench`
 - Initial release: `0.1.0`

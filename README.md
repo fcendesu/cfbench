@@ -4,6 +4,9 @@
 
 `cfbench` is not affiliated with, endorsed by, or supported by Cloudflare.
 
+This repository is pre-release. MVP implementation is present, but release
+validation evidence is still being collected.
+
 ## Install from source
 
 Rust 1.95 or newer is required.
@@ -54,7 +57,13 @@ Options:
   -V, --version              Print version
 ```
 
-`--ipv4` and `--ipv6` are mutually exclusive. The timeout accepts 1 through 300 seconds. Progress and diagnostics go to stderr; `--json` writes exactly one JSON document to stdout. `--quiet` suppresses progress, not the final result or fatal errors.
+`--ipv4` and `--ipv6` are mutually exclusive. Forced-family modes bypass system
+proxies because a proxy cannot guarantee the target connection's address
+family. Auto mode retains standard system proxy behavior. The timeout accepts
+1 through 300 seconds and is an absolute deadline for the complete request,
+including response-body streaming. Progress and diagnostics go to stderr;
+`--json` writes exactly one JSON document to stdout. `--quiet` suppresses
+progress, not the final result or fatal errors.
 
 ## Text output
 
@@ -136,6 +145,11 @@ Missing measurements serialize as `null`, never as zero. A failed or cancelled r
 The default plan ramps through large payloads. If every scheduled transfer runs, it requests about 969 MB of download payload and sends about 297 MB of upload payload. Adaptive stopping can reduce that total, but users on metered or constrained connections should use `--no-download` or `--no-upload` as appropriate. Loaded-latency probes request zero-byte response bodies.
 
 No project telemetry or result-collection service is used. Test traffic goes directly to Cloudflare's `__down` and `__up` endpoints.
+
+Downloaded usage counts response-body bytes actually received, including bytes
+received before a failed or cancelled request. Uploaded usage counts bytes
+yielded to reqwest's HTTP request body, the closest native observable boundary;
+it does not claim that the remote peer accepted every yielded byte.
 
 ## Compatibility and timing
 
