@@ -7,7 +7,7 @@ use cfbench::cancellation::CancellationToken;
 use cfbench::error::TransportError;
 use cfbench::measurement::TimingObservation;
 use cfbench::plan::{Direction, MeasurementPlan, MeasurementStep};
-use cfbench::progress::{ProgressEvent, ProgressReporter};
+use cfbench::progress::{ProgressEvent, ProgressFailureKind, ProgressReporter, ProgressStage};
 use cfbench::runner::{MeasurementFuture, MeasurementTransport, Runner};
 
 type ScriptedTransfer = Result<(Duration, f64), TransportError>;
@@ -23,6 +23,7 @@ struct TimedTransport {
     probe_http_version: &'static str,
     probe_ip_family: &'static str,
     invalid_probe: bool,
+    block_probe_until_cancelled: bool,
 }
 
 impl TimedTransport {
@@ -37,6 +38,7 @@ impl TimedTransport {
             probe_http_version: "1.1",
             probe_ip_family: "ipv4",
             invalid_probe: false,
+            block_probe_until_cancelled: false,
         }
     }
 }
@@ -59,6 +61,9 @@ impl MeasurementTransport for TimedTransport {
                     endpoint: "https://fixture.invalid/__down".to_owned(),
                     payload_bytes: 0,
                 })
+            } else if self.block_probe_until_cancelled {
+                cancellation.cancelled().await;
+                Err(TransportError::Cancelled { payload_bytes: 0 })
             } else {
                 if cancellation.is_cancelled() {
                     Err(TransportError::Cancelled { payload_bytes: 0 })
@@ -194,14 +199,36 @@ async fn ineligible_group_discards_loaded_points_and_probe_errors_are_diagnostic
 #[tokio::test(start_paused = true)]
 async fn loaded_results_keep_only_latest_twenty() {
     let transport = TimedTransport::new([(Duration::from_secs(9), 900.0)]);
+    let starts = transport.probe_starts.clone();
+    let (progress, receiver) = ProgressReporter::channel(256);
     let task = tokio::spawn(async move {
         Runner::new(transport, download_plan(1))
-            .run(&CancellationToken::new())
+            .run_with_progress(&CancellationToken::new(), progress)
             .await
     });
     tokio::time::advance(Duration::from_secs(9)).await;
     let outcome = task.await.unwrap();
+    let loaded_events: Vec<_> = receiver
+        .into_iter()
+        .filter_map(|event| match event {
+            ProgressEvent::LoadedLatencyCompleted {
+                direction,
+                sequence,
+                ..
+            } => Some((direction, sequence)),
+            _ => None,
+        })
+        .collect();
+
     assert_eq!(outcome.result.raw.download_loaded_latency.len(), 20);
+    assert!(loaded_events.len() > 20);
+    assert_eq!(loaded_events.len(), starts.load(Ordering::SeqCst));
+    assert!(
+        loaded_events
+            .iter()
+            .enumerate()
+            .all(|(index, event)| *event == (Direction::Download, index as u64 + 1))
+    );
 }
 
 #[tokio::test(start_paused = true)]
@@ -365,4 +392,106 @@ async fn loaded_progress_is_direction_local_and_includes_ineligible_probes() {
             },
         ]
     );
+}
+
+#[tokio::test(start_paused = true)]
+async fn loaded_transport_failure_emits_once_and_remains_nonterminal() {
+    let transport = TimedTransport {
+        fail_probe: true,
+        ..TimedTransport::new([(Duration::from_millis(300), 300.0)])
+    };
+    let (progress, receiver) = ProgressReporter::channel(256);
+    let task = tokio::spawn(async move {
+        Runner::new(transport, download_plan(1))
+            .run_with_progress(&CancellationToken::new(), progress)
+            .await
+    });
+
+    tokio::time::advance(Duration::from_millis(300)).await;
+    let outcome = task.await.unwrap();
+    let failures: Vec<_> = receiver
+        .into_iter()
+        .filter(|event| matches!(event, ProgressEvent::RequestFailed { .. }))
+        .collect();
+
+    assert!(outcome.error.is_none());
+    assert!(outcome.result.raw.download_loaded_latency.is_empty());
+    assert_eq!(outcome.result.diagnostics.len(), 1);
+    assert_eq!(
+        failures,
+        vec![ProgressEvent::RequestFailed {
+            stage: ProgressStage::LoadedLatency {
+                direction: Direction::Download,
+            },
+            current: None,
+            total: None,
+            kind: ProgressFailureKind::Timeout,
+        }]
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn loaded_conversion_rejection_emits_once_and_remains_nonterminal() {
+    let transport = TimedTransport {
+        invalid_probe: true,
+        ..TimedTransport::new([(Duration::from_millis(300), 300.0)])
+    };
+    let (progress, receiver) = ProgressReporter::channel(256);
+    let task = tokio::spawn(async move {
+        Runner::new(transport, download_plan(1))
+            .run_with_progress(&CancellationToken::new(), progress)
+            .await
+    });
+
+    tokio::time::advance(Duration::from_millis(300)).await;
+    let outcome = task.await.unwrap();
+    let failures: Vec<_> = receiver
+        .into_iter()
+        .filter(|event| matches!(event, ProgressEvent::RequestFailed { .. }))
+        .collect();
+
+    assert!(outcome.error.is_none());
+    assert!(outcome.result.raw.download_loaded_latency.is_empty());
+    assert_eq!(outcome.result.diagnostics.len(), 1);
+    assert_eq!(
+        failures,
+        vec![ProgressEvent::RequestFailed {
+            stage: ProgressStage::LoadedLatency {
+                direction: Direction::Download,
+            },
+            current: None,
+            total: None,
+            kind: ProgressFailureKind::InvalidMeasurement,
+        }]
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn normal_group_shutdown_cancellation_emits_no_loaded_failure() {
+    let transport = TimedTransport {
+        block_probe_until_cancelled: true,
+        ..TimedTransport::new([(Duration::from_millis(300), 300.0)])
+    };
+    let active = transport.active_probes.clone();
+    let (progress, receiver) = ProgressReporter::channel(256);
+    let task = tokio::spawn(async move {
+        Runner::new(transport, download_plan(1))
+            .run_with_progress(&CancellationToken::new(), progress)
+            .await
+    });
+
+    tokio::task::yield_now().await;
+    tokio::time::advance(Duration::from_millis(300)).await;
+    let outcome = task.await.unwrap();
+    let failures = receiver
+        .into_iter()
+        .filter(|event| matches!(event, ProgressEvent::RequestFailed { .. }))
+        .count();
+
+    assert!(outcome.error.is_none());
+    assert!(outcome.result.diagnostics.is_empty());
+    assert!(outcome.result.raw.download_loaded_latency.is_empty());
+    assert_eq!(outcome.result.raw.download.len(), 1);
+    assert_eq!(failures, 0);
+    assert_eq!(active.load(Ordering::SeqCst), 0);
 }

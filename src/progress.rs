@@ -54,7 +54,7 @@ pub enum ProgressStage {
     },
 }
 
-/// A sanitized failure classification suitable for terminal progress output.
+/// A sanitized failure classification suitable for line-oriented progress output.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ProgressFailureKind {
     HttpStatus(u16),
@@ -62,6 +62,7 @@ pub enum ProgressFailureKind {
     Cancelled,
     BodyStream,
     PayloadMismatch,
+    InvalidMeasurement,
     Request,
 }
 

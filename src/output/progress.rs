@@ -139,6 +139,7 @@ fn failure_detail(kind: ProgressFailureKind) -> String {
         ProgressFailureKind::Cancelled => "cancelled".to_owned(),
         ProgressFailureKind::BodyStream => "body stream".to_owned(),
         ProgressFailureKind::PayloadMismatch => "payload mismatch".to_owned(),
+        ProgressFailureKind::InvalidMeasurement => "invalid measurement".to_owned(),
         ProgressFailureKind::Request => "request failed".to_owned(),
     }
 }

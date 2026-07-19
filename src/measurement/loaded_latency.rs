@@ -7,7 +7,7 @@ use tokio::task::JoinHandle;
 use crate::cancellation::CancellationToken;
 use crate::error::TransportError;
 use crate::plan::Direction;
-use crate::progress::{ProgressEvent, ProgressReporter};
+use crate::progress::{ProgressEvent, ProgressFailureKind, ProgressReporter, ProgressStage};
 use crate::results::LatencyPoint;
 use crate::runner::MeasurementTransport;
 
@@ -60,17 +60,34 @@ where
                             });
                             outcome.points.push(point);
                         }
-                        Err(error) => outcome.diagnostics.push(format!(
-                            "loaded latency conversion failed during {} for endpoint {endpoint}: {error}",
-                            direction_name(direction)
-                        )),
+                        Err(error) => {
+                            progress.emit(ProgressEvent::RequestFailed {
+                                stage: ProgressStage::LoadedLatency { direction },
+                                current: None,
+                                total: None,
+                                kind: ProgressFailureKind::InvalidMeasurement,
+                            });
+                            outcome.diagnostics.push(format!(
+                                "loaded latency conversion failed during {} for endpoint {endpoint}: {error}",
+                                direction_name(direction)
+                            ));
+                        }
                     }
                 }
                 Err(TransportError::Cancelled { .. }) if cancellation.is_cancelled() => break,
-                Err(error) => outcome.diagnostics.push(format!(
-                    "loaded latency probe failed during {}: {error}",
-                    direction_name(direction)
-                )),
+                Err(error) => {
+                    let kind = crate::runner::progress_failure_kind(&error);
+                    progress.emit(ProgressEvent::RequestFailed {
+                        stage: ProgressStage::LoadedLatency { direction },
+                        current: None,
+                        total: None,
+                        kind,
+                    });
+                    outcome.diagnostics.push(format!(
+                        "loaded latency probe failed during {}: {error}",
+                        direction_name(direction)
+                    ));
+                }
             }
 
             let remaining = PROBE_THROTTLE.saturating_sub(started.elapsed());

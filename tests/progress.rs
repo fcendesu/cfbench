@@ -113,6 +113,10 @@ fn formats_safe_failure_categories_without_transport_details() {
         (ProgressFailureKind::Cancelled, "cancelled"),
         (ProgressFailureKind::BodyStream, "body stream"),
         (ProgressFailureKind::PayloadMismatch, "payload mismatch"),
+        (
+            ProgressFailureKind::InvalidMeasurement,
+            "invalid measurement",
+        ),
         (ProgressFailureKind::Request, "request failed"),
     ];
 

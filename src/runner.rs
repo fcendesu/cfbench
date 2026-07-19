@@ -332,7 +332,7 @@ where
                         ProgressStage::Latency,
                         current,
                         total,
-                        ProgressFailureKind::Request,
+                        ProgressFailureKind::InvalidMeasurement,
                     ));
                 }
             };
@@ -439,7 +439,7 @@ where
                         },
                         current,
                         total,
-                        ProgressFailureKind::Request,
+                        ProgressFailureKind::InvalidMeasurement,
                     ));
                     break;
                 }
@@ -569,7 +569,7 @@ const fn progress_counter(value: usize) -> u16 {
     }
 }
 
-const fn progress_failure_kind(error: &TransportError) -> ProgressFailureKind {
+pub(crate) const fn progress_failure_kind(error: &TransportError) -> ProgressFailureKind {
     match error {
         TransportError::HttpStatus { status, .. } => ProgressFailureKind::HttpStatus(*status),
         TransportError::HeaderTimeout { .. } | TransportError::BodyTimeout { .. } => {

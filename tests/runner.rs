@@ -575,3 +575,51 @@ async fn progress_reports_packet_loss_unavailable_once_without_a_point() {
     assert!(outcome.result.summary.packet_loss_ratio.is_none());
     assert_eq!(events, vec![ProgressEvent::PacketLossUnavailable]);
 }
+
+#[tokio::test]
+async fn initial_and_later_hundred_kilobyte_groups_have_independent_counters() {
+    let runner = Runner::new(
+        ScriptedTransport::transfer_durations(std::iter::repeat_n(500.0, 10)),
+        downloads(&[(100_000, 1, true), (100_000, 9, false)]),
+    )
+    .with_loaded_latency(false);
+    let (progress, receiver) = ProgressReporter::channel(256);
+
+    let outcome = runner
+        .run_with_progress(&CancellationToken::new(), progress)
+        .await;
+    let events: Vec<_> = receiver.into_iter().collect();
+
+    assert!(outcome.error.is_none());
+    assert_eq!(outcome.result.raw.download.len(), 10);
+    assert!(matches!(
+        events.first(),
+        Some(ProgressEvent::TransferCompleted {
+            direction: Direction::Download,
+            requested_bytes: 100_000,
+            current: 1,
+            total: 1,
+            ..
+        })
+    ));
+    assert!(matches!(
+        events.get(1),
+        Some(ProgressEvent::TransferCompleted {
+            direction: Direction::Download,
+            requested_bytes: 100_000,
+            current: 1,
+            total: 9,
+            ..
+        })
+    ));
+    assert!(matches!(
+        events.last(),
+        Some(ProgressEvent::TransferCompleted {
+            direction: Direction::Download,
+            requested_bytes: 100_000,
+            current: 9,
+            total: 9,
+            ..
+        })
+    ));
+}

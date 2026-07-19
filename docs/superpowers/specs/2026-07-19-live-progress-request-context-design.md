@@ -214,17 +214,17 @@ validated measurement values. Transfer and unloaded-latency success events
 correspond to stored raw points; loaded-probe progress follows every converted
 request even when later eligibility or latest-20 retention excludes it from the
 result. `ProgressFailureKind` carries safe categories such as HTTP status,
-timeout, cancellation, body stream, and payload mismatch; it does not wrap or
-expose reqwest errors.
+timeout, cancellation, body stream, payload mismatch, and invalid measurement;
+it does not wrap or expose reqwest errors.
 
 Responsibilities remain separated:
 
 - `transport` constructs browser-compatible request headers and returns typed
   observations/errors;
-- `runner` emits domain progress events after point acceptance or request
-  failure and owns counters/early-stop notices;
-- `measurement/loaded_latency` emits loaded-probe events through the same
-  bounded sender;
+- `runner` emits domain progress events after point acceptance or terminal
+  latency/transfer failure and owns counters/early-stop notices;
+- `measurement/loaded_latency` emits successful and nonterminal failed probe
+  events through the same bounded sender while preserving probe diagnostics;
 - `output` formats progress events into stable ordinary lines;
 - `app` owns the bounded channel, renderer task, stderr sink, suppression
   policy, and renderer joining;
@@ -241,10 +241,15 @@ payload sizes, timeouts, cancellation, or usage accounting.
   and still joins the runner and probe tasks before returning.
 - Progress formatting rejects non-finite numeric values and emits a safe
   unavailable category rather than serializing `NaN` or infinity.
-- Failure progress is emitted once at the boundary that converts the transport
-  error into `RunnerError`; lower layers do not duplicate it.
+- Terminal latency and transfer failure progress is emitted once at the runner
+  boundary that records the failure and converts it into `RunnerError`; lower
+  layers do not duplicate it.
+- Loaded-probe transport failures and conversion rejections remain nonterminal:
+  they create no `RunnerError` and emit exactly once inside
+  `measurement/loaded_latency` while retaining the existing diagnostic.
 - Cancellation progress is emitted only when cancellation selects before the
-  request completes.
+  request completes. A loaded probe cancelled by normal group shutdown is
+  silent and does not record a diagnostic or failure event.
 
 ## Testing
 
