@@ -1,7 +1,9 @@
-use std::io;
+use std::io::{self, Write};
 use std::process::ExitCode;
 
-use cfbench::app::{OutputOptions, run_with_signal, write_outcome, write_progress};
+use cfbench::app::{
+    AppError, OutputOptions, run_with_signal_and_progress, write_outcome, write_progress,
+};
 use cfbench::cli::Cli;
 use cfbench::config::RunConfig;
 use cfbench::error::TransportError;
@@ -29,22 +31,27 @@ async fn run(cli: Cli, config: RunConfig) -> ExitCode {
         json: cli.json,
         quiet: cli.quiet,
     };
-    if let Err(error) = write_progress(options, &mut io::stderr().lock()) {
-        eprintln!("error: {error}");
-        return ExitCode::FAILURE;
-    }
-
-    let outcome = match ReqwestTransport::new(config.clone()) {
+    let (outcome, progress_error) = match ReqwestTransport::new(config.clone()) {
         Ok(transport) => {
             let plan = default_cloudflare_plan().for_config(&config);
             let runner =
                 Runner::new(transport, plan).with_loaded_latency(!config.no_loaded_latency);
-            run_with_signal(&runner, tokio::signal::ctrl_c()).await
+            let run = run_with_signal_and_progress(
+                &runner,
+                tokio::signal::ctrl_c(),
+                options,
+                io::stderr(),
+            )
+            .await;
+            (run.outcome, run.progress_error)
         }
-        Err(error) => failed_outcome(error),
+        Err(error) => {
+            let progress_error = write_progress(options, &mut io::stderr().lock()).err();
+            (failed_outcome(error), progress_error)
+        }
     };
 
-    match write_outcome(
+    let output_status = match write_outcome(
         outcome,
         options,
         &mut io::stdout().lock(),
@@ -53,10 +60,23 @@ async fn run(cli: Cli, config: RunConfig) -> ExitCode {
         Ok(0) => ExitCode::SUCCESS,
         Ok(_) => ExitCode::FAILURE,
         Err(error) => {
-            eprintln!("error: {error}");
+            report_app_error(&error);
             ExitCode::FAILURE
         }
+    };
+
+    if let Some(error) = progress_error {
+        report_app_error(&error);
+        ExitCode::FAILURE
+    } else {
+        output_status
     }
+}
+
+fn report_app_error(error: &AppError) {
+    let mut stderr = io::stderr().lock();
+    let _ = writeln!(stderr, "error: {error}");
+    let _ = stderr.flush();
 }
 
 fn failed_outcome(source: TransportError) -> RunOutcome {

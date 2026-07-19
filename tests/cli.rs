@@ -78,3 +78,15 @@ fn version_uses_package_version() {
             env!("CARGO_PKG_VERSION")
         )));
 }
+
+#[test]
+fn help_and_version_never_emit_runtime_progress() {
+    for argument in ["--help", "--version"] {
+        Command::cargo_bin("cfbench")
+            .unwrap()
+            .arg(argument)
+            .assert()
+            .success()
+            .stderr(predicate::str::is_empty());
+    }
+}

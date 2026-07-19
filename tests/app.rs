@@ -1,15 +1,183 @@
 use std::future::Future;
+use std::io::Write;
 use std::pin::Pin;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Condvar, Mutex};
 use std::task::{Context, Poll};
+use std::time::Duration;
 
-use cfbench::app::{OutputOptions, run_with_signal, write_outcome, write_progress};
+use cfbench::app::{
+    AppError, OutputOptions, run_with_signal, run_with_signal_and_progress,
+    spawn_progress_renderer, write_outcome, write_progress,
+};
 use cfbench::cancellation::CancellationToken;
 use cfbench::error::TransportError;
 use cfbench::measurement::TimingObservation;
 use cfbench::plan::{MeasurementPlan, MeasurementStep};
+use cfbench::progress::{ProgressEvent, ProgressReporter};
 use cfbench::runner::{MeasurementFuture, MeasurementTransport, RunOutcome, Runner, RunnerError};
+
+#[tokio::test]
+async fn text_mode_streams_progress_but_quiet_and_json_do_not() {
+    let text = run_progress_fixture(OutputOptions {
+        json: false,
+        quiet: false,
+    })
+    .await;
+    assert!(text.stderr.contains("Testing against Cloudflare edge...\n"));
+    assert!(text.stderr.contains("[latency 1/1] 10.00 ms\n"));
+
+    let quiet = run_progress_fixture(OutputOptions {
+        json: false,
+        quiet: true,
+    })
+    .await;
+    assert!(!quiet.stderr.contains("Testing against"));
+    assert!(!quiet.stderr.contains("[latency"));
+    assert!(text.stdout.starts_with("cfbench 0.1.0\n"));
+
+    let json = run_progress_fixture(OutputOptions {
+        json: true,
+        quiet: false,
+    })
+    .await;
+    assert!(!json.stderr.contains("Testing against"));
+    assert!(!json.stderr.contains("[latency"));
+    serde_json::from_str::<serde_json::Value>(&json.stdout).unwrap();
+}
+
+#[test]
+fn progress_renderer_writes_and_flushes_each_line_then_joins_on_channel_closure() {
+    let writer = SharedWriter::default();
+    let inspection = writer.clone();
+    let cancellation = CancellationToken::new();
+    let (reporter, receiver) = ProgressReporter::channel(1);
+    let renderer = spawn_progress_renderer(receiver, writer, cancellation.clone()).unwrap();
+
+    reporter.emit(ProgressEvent::LatencyCompleted {
+        current: 1,
+        total: 1,
+        latency_ms: 12.5,
+    });
+    drop(reporter);
+
+    renderer.join().unwrap().unwrap();
+    assert_eq!(
+        inspection.text(),
+        concat!(
+            "Testing against Cloudflare edge...\n",
+            "[latency 1/1] 12.50 ms\n"
+        )
+    );
+    assert_eq!(inspection.flushes(), 2);
+    assert!(!cancellation.is_cancelled());
+}
+
+#[test]
+fn opening_progress_line_flushes_and_respects_suppression() {
+    let mut text = SharedWriter::default();
+    write_progress(
+        OutputOptions {
+            json: false,
+            quiet: false,
+        },
+        &mut text,
+    )
+    .unwrap();
+    assert_eq!(text.text(), "Testing against Cloudflare edge...\n");
+    assert_eq!(text.flushes(), 1);
+
+    for options in [
+        OutputOptions {
+            json: false,
+            quiet: true,
+        },
+        OutputOptions {
+            json: true,
+            quiet: false,
+        },
+    ] {
+        let mut suppressed = SharedWriter::default();
+        write_progress(options, &mut suppressed).unwrap();
+        assert!(suppressed.text().is_empty());
+        assert_eq!(suppressed.flushes(), 0);
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn renderer_write_failure_cancels_runner_and_is_retained_after_join() {
+    let lifecycle = Arc::new(FailureLifecycle::default());
+    let runner = Runner::new(
+        CancellationAwareTransport(lifecycle.clone()),
+        MeasurementPlan {
+            upstream_version: "test",
+            upstream_commit: "test",
+            steps: vec![MeasurementStep::Latency { packets: 1 }],
+        },
+    )
+    .with_loaded_latency(false);
+
+    let run = tokio::time::timeout(
+        Duration::from_secs(1),
+        run_with_signal_and_progress(
+            &runner,
+            std::future::pending::<std::io::Result<()>>(),
+            OutputOptions {
+                json: false,
+                quiet: false,
+            },
+            BlockingFailureWriter(lifecycle.clone()),
+        ),
+    )
+    .await
+    .expect("progress failure must not deadlock the runner");
+
+    assert!(matches!(run.progress_error, Some(AppError::Write(_))));
+    assert!(matches!(
+        run.outcome.error,
+        Some(RunnerError::Cancelled { ref stage }) if stage == "latency"
+    ));
+    assert!(lifecycle.transport_finished.load(Ordering::SeqCst));
+    assert!(lifecycle.writer_dropped.load(Ordering::SeqCst));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn renderer_failure_after_channel_fills_does_not_deadlock_or_change_results() {
+    const PACKETS: u32 = 300;
+
+    let lifecycle = Arc::new(ChannelFillLifecycle::default());
+    let runner = Runner::new(
+        CountingLatencyTransport {
+            lifecycle: lifecycle.clone(),
+            expected: PACKETS,
+        },
+        MeasurementPlan {
+            upstream_version: "test",
+            upstream_commit: "test",
+            steps: vec![MeasurementStep::Latency { packets: PACKETS }],
+        },
+    )
+    .with_loaded_latency(false);
+
+    let run = tokio::time::timeout(
+        Duration::from_secs(1),
+        run_with_signal_and_progress(
+            &runner,
+            std::future::pending::<std::io::Result<()>>(),
+            OutputOptions {
+                json: false,
+                quiet: false,
+            },
+            FailAfterAllRequestsWriter(lifecycle),
+        ),
+    )
+    .await
+    .expect("a full progress channel and writer failure must not deadlock");
+
+    assert!(matches!(run.progress_error, Some(AppError::Write(_))));
+    assert!(run.outcome.error.is_none());
+    assert_eq!(run.outcome.result.raw.latency.len(), PACKETS as usize);
+}
 
 #[test]
 fn json_mode_writes_one_partial_document_without_progress_then_returns_one() {
@@ -220,6 +388,243 @@ fn partial_failure() -> RunOutcome {
     RunOutcome {
         result,
         error: Some(error),
+    }
+}
+
+struct FixtureOutput {
+    stdout: String,
+    stderr: String,
+}
+
+async fn run_progress_fixture(options: OutputOptions) -> FixtureOutput {
+    let writer = SharedWriter::default();
+    let inspection = writer.clone();
+    let runner = Runner::new(
+        ImmediateLatencyTransport,
+        MeasurementPlan {
+            upstream_version: "test",
+            upstream_commit: "test",
+            steps: vec![MeasurementStep::Latency { packets: 1 }],
+        },
+    )
+    .with_loaded_latency(false);
+
+    let run = run_with_signal_and_progress(
+        &runner,
+        std::future::pending::<std::io::Result<()>>(),
+        options,
+        writer,
+    )
+    .await;
+    assert!(run.progress_error.is_none());
+
+    let mut stdout = Vec::new();
+    let mut final_stderr = inspection.clone();
+    let exit = write_outcome(run.outcome, options, &mut stdout, &mut final_stderr).unwrap();
+    assert_eq!(exit, 0);
+
+    FixtureOutput {
+        stdout: String::from_utf8(stdout).unwrap(),
+        stderr: inspection.text(),
+    }
+}
+
+#[derive(Clone, Default)]
+struct SharedWriter(Arc<Mutex<WriterState>>);
+
+#[derive(Default)]
+struct WriterState {
+    bytes: Vec<u8>,
+    flushes: usize,
+}
+
+impl SharedWriter {
+    fn text(&self) -> String {
+        String::from_utf8(self.0.lock().unwrap().bytes.clone()).unwrap()
+    }
+
+    fn flushes(&self) -> usize {
+        self.0.lock().unwrap().flushes
+    }
+}
+
+impl Write for SharedWriter {
+    fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
+        self.0.lock().unwrap().bytes.extend_from_slice(buffer);
+        Ok(buffer.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.0.lock().unwrap().flushes += 1;
+        Ok(())
+    }
+}
+
+struct ImmediateLatencyTransport;
+
+impl MeasurementTransport for ImmediateLatencyTransport {
+    fn latency<'a>(&'a self, _: &'a CancellationToken) -> MeasurementFuture<'a> {
+        Box::pin(async { Ok(TimingObservation::from_millis(20.0, 20.0, 10.0, 0, "1.1")) })
+    }
+
+    fn loaded_latency<'a>(
+        &'a self,
+        _: cfbench::plan::Direction,
+        _: &'a CancellationToken,
+    ) -> MeasurementFuture<'a> {
+        unused_measurement()
+    }
+
+    fn download<'a>(
+        &'a self,
+        _: u64,
+        _: Option<&'a str>,
+        _: &'a CancellationToken,
+    ) -> MeasurementFuture<'a> {
+        unused_measurement()
+    }
+
+    fn upload<'a>(&'a self, _: u64, _: &'a CancellationToken) -> MeasurementFuture<'a> {
+        unused_measurement()
+    }
+}
+
+#[derive(Default)]
+struct FailureLifecycle {
+    transport_started: Mutex<bool>,
+    transport_started_notification: Condvar,
+    transport_finished: AtomicBool,
+    writer_dropped: AtomicBool,
+}
+
+struct BlockingFailureWriter(Arc<FailureLifecycle>);
+
+impl Write for BlockingFailureWriter {
+    fn write(&mut self, _: &[u8]) -> std::io::Result<usize> {
+        let mut started = self.0.transport_started.lock().unwrap();
+        while !*started {
+            started = self.0.transport_started_notification.wait(started).unwrap();
+        }
+        Err(std::io::Error::new(
+            std::io::ErrorKind::BrokenPipe,
+            "scripted progress writer failure",
+        ))
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+impl Drop for BlockingFailureWriter {
+    fn drop(&mut self) {
+        self.0.writer_dropped.store(true, Ordering::SeqCst);
+    }
+}
+
+struct CancellationAwareTransport(Arc<FailureLifecycle>);
+
+impl MeasurementTransport for CancellationAwareTransport {
+    fn latency<'a>(&'a self, cancellation: &'a CancellationToken) -> MeasurementFuture<'a> {
+        let lifecycle = self.0.clone();
+        Box::pin(async move {
+            {
+                let mut started = lifecycle.transport_started.lock().unwrap();
+                *started = true;
+                lifecycle.transport_started_notification.notify_one();
+            }
+            cancellation.cancelled().await;
+            lifecycle.transport_finished.store(true, Ordering::SeqCst);
+            Err(TransportError::Cancelled { payload_bytes: 0 })
+        })
+    }
+
+    fn loaded_latency<'a>(
+        &'a self,
+        _: cfbench::plan::Direction,
+        _: &'a CancellationToken,
+    ) -> MeasurementFuture<'a> {
+        unused_measurement()
+    }
+
+    fn download<'a>(
+        &'a self,
+        _: u64,
+        _: Option<&'a str>,
+        _: &'a CancellationToken,
+    ) -> MeasurementFuture<'a> {
+        unused_measurement()
+    }
+
+    fn upload<'a>(&'a self, _: u64, _: &'a CancellationToken) -> MeasurementFuture<'a> {
+        unused_measurement()
+    }
+}
+
+#[derive(Default)]
+struct ChannelFillLifecycle {
+    completed: Mutex<u32>,
+    completed_notification: Condvar,
+}
+
+struct FailAfterAllRequestsWriter(Arc<ChannelFillLifecycle>);
+
+impl Write for FailAfterAllRequestsWriter {
+    fn write(&mut self, _: &[u8]) -> std::io::Result<usize> {
+        let mut completed = self.0.completed.lock().unwrap();
+        while *completed < 300 {
+            completed = self.0.completed_notification.wait(completed).unwrap();
+        }
+        Err(std::io::Error::new(
+            std::io::ErrorKind::BrokenPipe,
+            "scripted failure after progress channel fills",
+        ))
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+struct CountingLatencyTransport {
+    lifecycle: Arc<ChannelFillLifecycle>,
+    expected: u32,
+}
+
+impl MeasurementTransport for CountingLatencyTransport {
+    fn latency<'a>(&'a self, _: &'a CancellationToken) -> MeasurementFuture<'a> {
+        let lifecycle = self.lifecycle.clone();
+        let expected = self.expected;
+        Box::pin(async move {
+            let mut completed = lifecycle.completed.lock().unwrap();
+            *completed += 1;
+            if *completed == expected {
+                lifecycle.completed_notification.notify_one();
+            }
+            drop(completed);
+            Ok(TimingObservation::from_millis(20.0, 20.0, 10.0, 0, "1.1"))
+        })
+    }
+
+    fn loaded_latency<'a>(
+        &'a self,
+        _: cfbench::plan::Direction,
+        _: &'a CancellationToken,
+    ) -> MeasurementFuture<'a> {
+        unused_measurement()
+    }
+
+    fn download<'a>(
+        &'a self,
+        _: u64,
+        _: Option<&'a str>,
+        _: &'a CancellationToken,
+    ) -> MeasurementFuture<'a> {
+        unused_measurement()
+    }
+
+    fn upload<'a>(&'a self, _: u64, _: &'a CancellationToken) -> MeasurementFuture<'a> {
+        unused_measurement()
     }
 }
 
