@@ -127,27 +127,6 @@ impl ReqwestTransport {
         Ok(with_ip_family(observation, ip_family))
     }
 
-    /// Sends a production download request and returns after response headers arrive.
-    ///
-    /// This is intentionally hidden from generated documentation and exists for the
-    /// ignored live request-context acceptance guard. The response is dropped without
-    /// consuming its body.
-    #[doc(hidden)]
-    pub async fn probe_download_headers(
-        &self,
-        bytes: u64,
-    ) -> Result<reqwest::StatusCode, TransportError> {
-        let (request, endpoint) = self.download_request(bytes, None)?;
-        let cancellation = CancellationToken::new();
-        let deadline = tokio::time::Instant::now() + self.request_timeout;
-        let response = self
-            .send_headers(request, &endpoint, deadline, &cancellation)
-            .await?;
-        let status = response.status();
-        drop(response);
-        Ok(status)
-    }
-
     pub async fn upload(
         &self,
         bytes: u64,
@@ -427,6 +406,33 @@ mod tests {
     use tokio::sync::Notify;
 
     use super::*;
+
+    async fn probe_download_headers(
+        transport: &ReqwestTransport,
+        bytes: u64,
+    ) -> Result<reqwest::StatusCode, TransportError> {
+        let (request, endpoint) = transport.download_request(bytes, None)?;
+        let cancellation = CancellationToken::new();
+        let deadline = tokio::time::Instant::now() + transport.request_timeout;
+        let response = transport
+            .send_headers(request, &endpoint, deadline, &cancellation)
+            .await?;
+        let status = response.status();
+        drop(response);
+        Ok(status)
+    }
+
+    #[tokio::test]
+    #[ignore = "uses the live Cloudflare endpoint"]
+    async fn live_large_download_accepts_browser_request_context() {
+        let transport =
+            ReqwestTransport::new(RunConfig::default()).expect("build live Cloudflare transport");
+        let status = probe_download_headers(&transport, 100_000_000)
+            .await
+            .expect("Cloudflare large download endpoint returns response headers");
+
+        assert!(status.is_success());
+    }
 
     #[tokio::test]
     async fn cancellation_preempts_an_actively_polled_body_future() {

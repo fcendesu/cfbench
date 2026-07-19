@@ -215,7 +215,7 @@ and consume network resources. Run them explicitly with
 `cargo test --test live_cloudflare -- --ignored`. The large-download
 request-context guard reads only the 100 MB response headers and drops the body;
 it can be run alone with
-`cargo test --test live_cloudflare live_large_download_accepts_browser_request_context -- --ignored --exact`.
+`cargo test --lib transport::reqwest_transport::tests::live_large_download_accepts_browser_request_context -- --ignored --exact`.
 
 Requirements, design, testing, and the reqwest decision are documented under [`docs/`](docs/).
 

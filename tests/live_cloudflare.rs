@@ -9,17 +9,6 @@ fn live_transport() -> ReqwestTransport {
 }
 
 #[tokio::test]
-#[ignore = "uses the live Cloudflare endpoint"]
-async fn live_large_download_accepts_browser_request_context() {
-    let status = live_transport()
-        .probe_download_headers(100_000_000)
-        .await
-        .expect("Cloudflare large download endpoint returns response headers");
-
-    assert!(status.is_success());
-}
-
-#[tokio::test]
 #[ignore = "consumes external network resources"]
 async fn live_cloudflare_zero_byte_probe_is_finite() {
     let observation = live_transport()

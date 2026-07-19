@@ -126,12 +126,13 @@ No live test uses the default plan or requests the 250 MB download group.
 Run only the request-context regression with:
 
 ```text
-cargo test --test live_cloudflare live_large_download_accepts_browser_request_context -- --ignored --exact
+cargo test --lib transport::reqwest_transport::tests::live_large_download_accepts_browser_request_context -- --ignored --exact
 ```
 
 The guard covers the HTTP 403 observed on 2026-07-19 when the same 100 MB GET
 omitted both `Referer` and `Origin`. It reuses production request construction,
-same-origin headers, absolute timeout, and explicit no-retry client policy.
+same-origin headers, absolute timeout, and explicit no-retry client policy while
+remaining inside the transport's `#[cfg(test)]` module.
 
 ## 3. Critical test cases
 

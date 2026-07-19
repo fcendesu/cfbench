@@ -315,7 +315,7 @@ git commit -m "feat(cli): stream individual request progress"
 ### Task 5: Live guard, documentation, and verification
 
 **Files:**
-- Modify: `tests/live_cloudflare.rs`
+- Modify: `src/transport/reqwest_transport.rs`
 - Modify: `README.md`
 - Modify: `docs/PRD.md`
 - Modify: `docs/MVP.md`
@@ -334,12 +334,15 @@ Add an ignored test that sends the 100 MB GET with normalized Referer, validates
 #[ignore = "uses the live Cloudflare endpoint"]
 async fn live_large_download_accepts_browser_request_context() {
     let transport = ReqwestTransport::new(RunConfig::default()).unwrap();
-    let status = transport.probe_download_headers(100_000_000).await.unwrap();
+    let status = probe_download_headers(&transport, 100_000_000).await.unwrap();
     assert!(status.is_success());
 }
 ```
 
-The helper is test-only or crate-private and must reuse production header construction/no-retry policy.
+Keep the test and its private helper inside `reqwest_transport.rs`'s
+`#[cfg(test)]` module so no live-only method or `reqwest::StatusCode` enters the
+public API. The helper must reuse production request construction and the
+configured no-retry client.
 
 - [ ] **Step 2: Update all public documents**
 
@@ -364,6 +367,6 @@ Confirm from the diff that event sending uses nonblocking `try_send`, no progres
 - [ ] **Step 5: Commit**
 
 ```bash
-git add tests/live_cloudflare.rs README.md docs/PRD.md docs/MVP.md docs/MEASUREMENT_COMPATIBILITY.md docs/TEST_STRATEGY.md
+git add src/transport/reqwest_transport.rs README.md docs/PRD.md docs/MVP.md docs/MEASUREMENT_COMPATIBILITY.md docs/TEST_STRATEGY.md
 git commit -m "docs(progress): document live request reporting"
 ```
