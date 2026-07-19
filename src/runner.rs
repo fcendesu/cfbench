@@ -1,6 +1,7 @@
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
+use std::sync::atomic::AtomicU64;
 use std::time::Instant;
 
 use thiserror::Error;
@@ -12,6 +13,7 @@ use crate::measurement::{
     MeasurementConversionError, TimingObservation, bandwidth_point, latency_point,
 };
 use crate::plan::{Direction, MeasurementPlan, MeasurementStep};
+use crate::progress::{ProgressEvent, ProgressFailureKind, ProgressReporter, ProgressStage};
 use crate::results::{RunResult, reduce};
 use crate::transport::ReqwestTransport;
 
@@ -121,6 +123,11 @@ pub struct Runner<T> {
     loaded_latency: bool,
 }
 
+struct TransferProgress {
+    reporter: ProgressReporter,
+    loaded_sequence: Arc<AtomicU64>,
+}
+
 impl<T> Runner<T>
 where
     T: MeasurementTransport,
@@ -139,9 +146,18 @@ where
     }
 
     pub async fn run(&self, cancellation: &CancellationToken) -> RunOutcome {
+        self.run_with_progress(cancellation, ProgressReporter::disabled())
+            .await
+    }
+
+    pub async fn run_with_progress(
+        &self,
+        cancellation: &CancellationToken,
+        progress: ProgressReporter,
+    ) -> RunOutcome {
         let started = Instant::now();
         let mut result = RunResult::empty();
-        let error = self.execute(&mut result, cancellation).await;
+        let error = self.execute(&mut result, cancellation, &progress).await;
         result.usage.duration_ms = started.elapsed().as_secs_f64() * 1_000.0;
         result.summary = reduce(&result.raw);
 
@@ -152,9 +168,14 @@ where
         &self,
         result: &mut RunResult,
         cancellation: &CancellationToken,
+        progress: &ProgressReporter,
     ) -> Option<RunnerError> {
         let mut download_finished = false;
         let mut upload_finished = false;
+        let mut download_finish_reported = false;
+        let mut upload_finish_reported = false;
+        let download_loaded_sequence = Arc::new(AtomicU64::new(0));
+        let upload_loaded_sequence = Arc::new(AtomicU64::new(0));
 
         for step in &self.plan.steps {
             if cancellation.is_cancelled() {
@@ -168,7 +189,8 @@ where
 
             let error = match *step {
                 MeasurementStep::Latency { packets } => {
-                    self.run_latency_phase(packets, result, cancellation).await
+                    self.run_latency_phase(packets, result, cancellation, progress)
+                        .await
                 }
                 MeasurementStep::Download {
                     bytes,
@@ -176,7 +198,17 @@ where
                     bypass_finish,
                 } if !download_finished => {
                     match self
-                        .run_transfer_group(Direction::Download, bytes, count, result, cancellation)
+                        .run_transfer_group(
+                            Direction::Download,
+                            bytes,
+                            count,
+                            result,
+                            cancellation,
+                            TransferProgress {
+                                reporter: progress.clone(),
+                                loaded_sequence: download_loaded_sequence.clone(),
+                            },
+                        )
                         .await
                     {
                         Ok(group_finished) => {
@@ -194,7 +226,17 @@ where
                     bypass_finish,
                 } if !upload_finished => {
                     match self
-                        .run_transfer_group(Direction::Upload, bytes, count, result, cancellation)
+                        .run_transfer_group(
+                            Direction::Upload,
+                            bytes,
+                            count,
+                            result,
+                            cancellation,
+                            TransferProgress {
+                                reporter: progress.clone(),
+                                loaded_sequence: upload_loaded_sequence.clone(),
+                            },
+                        )
                         .await
                     {
                         Ok(group_finished) => {
@@ -206,13 +248,32 @@ where
                         Err(error) => Some(error),
                     }
                 }
-                MeasurementStep::PacketLossUnsupported { .. }
-                | MeasurementStep::Download { .. }
-                | MeasurementStep::Upload { .. } => None,
+                MeasurementStep::PacketLossUnsupported { .. } => {
+                    progress.emit(ProgressEvent::PacketLossUnavailable);
+                    None
+                }
+                MeasurementStep::Download { .. } => {
+                    if !download_finish_reported {
+                        progress.emit(ProgressEvent::DirectionFinished {
+                            direction: Direction::Download,
+                        });
+                        download_finish_reported = true;
+                    }
+                    None
+                }
+                MeasurementStep::Upload { .. } => {
+                    if !upload_finish_reported {
+                        progress.emit(ProgressEvent::DirectionFinished {
+                            direction: Direction::Upload,
+                        });
+                        upload_finish_reported = true;
+                    }
+                    None
+                }
             };
 
             if let Some(error) = error {
-                return Some(record_failure(result, error));
+                return Some(error);
             }
         }
         None
@@ -223,6 +284,7 @@ where
         packets: u32,
         result: &mut RunResult,
         cancellation: &CancellationToken,
+        progress: &ProgressReporter,
     ) -> Option<RunnerError> {
         let initial_phase =
             packets == 1 && result.raw.initial_latency.is_empty() && result.raw.latency.is_empty();
@@ -232,10 +294,24 @@ where
             result.raw.latency.reserve(packets as usize);
         }
 
-        for _ in 0..packets {
+        for (index, _) in (0..packets).enumerate() {
+            let current = progress_counter(index.saturating_add(1));
+            let total = progress_counter(packets as usize);
             let observation = match self.transport.latency(cancellation).await {
                 Ok(observation) => observation,
-                Err(error) => return Some(map_transport_error("latency", error)),
+                Err(error) => {
+                    let kind = progress_failure_kind(&error);
+                    let runner_error = map_transport_error("latency", error);
+                    return Some(record_request_failure(
+                        result,
+                        runner_error,
+                        progress,
+                        ProgressStage::Latency,
+                        current,
+                        total,
+                        kind,
+                    ));
+                }
             };
             let ip_family = observation.ip_family.clone();
             let http_version = observation.http_version.clone();
@@ -245,18 +321,32 @@ where
             let point = match latency_point(observation) {
                 Ok(point) => point,
                 Err(error) => {
-                    return Some(RunnerError::Conversion {
-                        stage: "latency".to_owned(),
-                        endpoint,
-                        source: error,
-                    });
+                    return Some(record_request_failure(
+                        result,
+                        RunnerError::Conversion {
+                            stage: "latency".to_owned(),
+                            endpoint,
+                            source: error,
+                        },
+                        progress,
+                        ProgressStage::Latency,
+                        current,
+                        total,
+                        ProgressFailureKind::Request,
+                    ));
                 }
             };
+            let latency_ms = point.ping_ms;
             if initial_phase {
                 result.raw.initial_latency.push(point);
             } else {
                 result.raw.latency.push(point);
             }
+            progress.emit(ProgressEvent::LatencyCompleted {
+                current,
+                total,
+                latency_ms,
+            });
         }
         None
     }
@@ -268,19 +358,28 @@ where
         count: u32,
         result: &mut RunResult,
         cancellation: &CancellationToken,
+        progress: TransferProgress,
     ) -> Result<bool, RunnerError> {
+        let TransferProgress {
+            reporter,
+            loaded_sequence,
+        } = progress;
         let group_cancellation = cancellation.child_token();
         let probe_task = self.loaded_latency.then(|| {
             spawn_loaded_probe_loop(
                 self.transport.clone(),
                 direction,
                 group_cancellation.clone(),
+                reporter.clone(),
+                loaded_sequence,
             )
         });
         let mut durations = Vec::with_capacity(count as usize);
         let mut terminal_error = None;
 
-        for _ in 0..count {
+        for (index, _) in (0..count).enumerate() {
+            let current = progress_counter(index.saturating_add(1));
+            let total = progress_counter(count as usize);
             let observation = match direction {
                 Direction::Download => self.transport.download(bytes, None, cancellation).await,
                 Direction::Upload => self.transport.upload(bytes, cancellation).await,
@@ -302,7 +401,19 @@ where
                                 .saturating_add(error.payload_bytes());
                         }
                     }
-                    terminal_error = Some(map_transport_error(direction_name(direction), error));
+                    let kind = progress_failure_kind(&error);
+                    terminal_error = Some(record_request_failure(
+                        result,
+                        map_transport_error(direction_name(direction), error),
+                        &reporter,
+                        ProgressStage::Transfer {
+                            direction,
+                            requested_bytes: bytes,
+                        },
+                        current,
+                        total,
+                        kind,
+                    ));
                     break;
                 }
             };
@@ -314,14 +425,27 @@ where
             let point = match bandwidth_point(direction, bytes, observation) {
                 Ok(point) => point,
                 Err(error) => {
-                    terminal_error = Some(RunnerError::Conversion {
-                        stage: direction_name(direction).to_owned(),
-                        endpoint,
-                        source: error,
-                    });
+                    terminal_error = Some(record_request_failure(
+                        result,
+                        RunnerError::Conversion {
+                            stage: direction_name(direction).to_owned(),
+                            endpoint,
+                            source: error,
+                        },
+                        &reporter,
+                        ProgressStage::Transfer {
+                            direction,
+                            requested_bytes: bytes,
+                        },
+                        current,
+                        total,
+                        ProgressFailureKind::Request,
+                    ));
                     break;
                 }
             };
+            let bps = point.bps;
+            let adjusted_duration_ms = point.adjusted_duration_ms;
             durations.push(point.adjusted_duration_ms);
             match direction {
                 Direction::Download => {
@@ -339,6 +463,14 @@ where
                     result.raw.upload.push(point);
                 }
             }
+            reporter.emit(ProgressEvent::TransferCompleted {
+                direction,
+                requested_bytes: bytes,
+                current,
+                total,
+                bps,
+                adjusted_duration_ms,
+            });
         }
 
         group_cancellation.cancel();
@@ -408,6 +540,50 @@ fn map_transport_error(stage: &str, error: TransportError) -> RunnerError {
 fn record_failure(result: &mut RunResult, error: RunnerError) -> RunnerError {
     result.failures.push(error.to_string());
     error
+}
+
+fn record_request_failure(
+    result: &mut RunResult,
+    error: RunnerError,
+    progress: &ProgressReporter,
+    stage: ProgressStage,
+    current: u16,
+    total: u16,
+    kind: ProgressFailureKind,
+) -> RunnerError {
+    let error = record_failure(result, error);
+    progress.emit(ProgressEvent::RequestFailed {
+        stage,
+        current: Some(current),
+        total: Some(total),
+        kind,
+    });
+    error
+}
+
+const fn progress_counter(value: usize) -> u16 {
+    if value > u16::MAX as usize {
+        u16::MAX
+    } else {
+        value as u16
+    }
+}
+
+const fn progress_failure_kind(error: &TransportError) -> ProgressFailureKind {
+    match error {
+        TransportError::HttpStatus { status, .. } => ProgressFailureKind::HttpStatus(*status),
+        TransportError::HeaderTimeout { .. } | TransportError::BodyTimeout { .. } => {
+            ProgressFailureKind::Timeout
+        }
+        TransportError::Cancelled { .. } => ProgressFailureKind::Cancelled,
+        TransportError::BodyStream { .. } => ProgressFailureKind::BodyStream,
+        TransportError::DownloadPayloadMismatch { .. }
+        | TransportError::UploadPayloadMismatch { .. } => ProgressFailureKind::PayloadMismatch,
+        TransportError::Request { .. }
+        | TransportError::InvalidBaseUrl(_)
+        | TransportError::InvalidRequestContext
+        | TransportError::ClientBuild(_) => ProgressFailureKind::Request,
+    }
 }
 
 fn update_http_version(result: &mut RunResult, version: Option<&str>) {

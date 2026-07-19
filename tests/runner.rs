@@ -5,7 +5,8 @@ use std::sync::{Arc, Mutex};
 use cfbench::cancellation::CancellationToken;
 use cfbench::error::TransportError;
 use cfbench::measurement::TimingObservation;
-use cfbench::plan::{MeasurementPlan, MeasurementStep};
+use cfbench::plan::{Direction, MeasurementPlan, MeasurementStep};
+use cfbench::progress::{ProgressEvent, ProgressFailureKind, ProgressReporter, ProgressStage};
 use cfbench::runner::{MeasurementFuture, MeasurementTransport, Runner, RunnerError};
 
 #[derive(Clone)]
@@ -390,4 +391,187 @@ async fn failed_twenty_packet_phase_keeps_completed_replacement_points() {
     assert!(outcome.result.raw.initial_latency.is_empty());
     assert_eq!(outcome.result.raw.latency.len(), 1);
     assert_eq!(outcome.result.raw.latency[0].ping_ms, 20.0);
+}
+
+#[tokio::test]
+async fn progress_reports_only_accepted_points_with_phase_local_counters() {
+    let observations = [
+        TimingObservation::from_millis(20.0, 30.0, 10.0, 0, "HTTP/1.1"),
+        TimingObservation::from_millis(20.0, 500.0, 0.0, 100_000, "HTTP/1.1"),
+        TimingObservation::from_millis(30.0, 40.0, 10.0, 0, "HTTP/1.1"),
+        TimingObservation::from_millis(31.0, 41.0, 10.0, 0, "HTTP/1.1"),
+        TimingObservation::from_millis(20.0, 500.0, 0.0, 100_000, "HTTP/1.1"),
+        TimingObservation::from_millis(20.0, 500.0, 0.0, 100_000, "HTTP/1.1"),
+    ];
+    let runner = Runner::new(
+        ScriptedTransport::new(observations.into_iter().map(Ok)),
+        plan(vec![
+            MeasurementStep::Latency { packets: 1 },
+            MeasurementStep::Download {
+                bytes: 100_000,
+                count: 1,
+                bypass_finish: true,
+            },
+            MeasurementStep::Latency { packets: 2 },
+            MeasurementStep::Download {
+                bytes: 100_000,
+                count: 2,
+                bypass_finish: false,
+            },
+        ]),
+    )
+    .with_loaded_latency(false);
+    let (progress, receiver) = ProgressReporter::channel(256);
+
+    let outcome = runner
+        .run_with_progress(&CancellationToken::new(), progress)
+        .await;
+    let events: Vec<_> = receiver.into_iter().collect();
+
+    assert!(outcome.error.is_none());
+    assert_eq!(outcome.result.raw.latency.len(), 2);
+    assert_eq!(outcome.result.raw.download.len(), 3);
+    assert_eq!(
+        events,
+        vec![
+            ProgressEvent::LatencyCompleted {
+                current: 1,
+                total: 1,
+                latency_ms: 10.0,
+            },
+            ProgressEvent::TransferCompleted {
+                direction: Direction::Download,
+                requested_bytes: 100_000,
+                current: 1,
+                total: 1,
+                bps: 1_608_000,
+                adjusted_duration_ms: 500.0,
+            },
+            ProgressEvent::LatencyCompleted {
+                current: 1,
+                total: 2,
+                latency_ms: 20.0,
+            },
+            ProgressEvent::LatencyCompleted {
+                current: 2,
+                total: 2,
+                latency_ms: 21.0,
+            },
+            ProgressEvent::TransferCompleted {
+                direction: Direction::Download,
+                requested_bytes: 100_000,
+                current: 1,
+                total: 2,
+                bps: 1_608_000,
+                adjusted_duration_ms: 500.0,
+            },
+            ProgressEvent::TransferCompleted {
+                direction: Direction::Download,
+                requested_bytes: 100_000,
+                current: 2,
+                total: 2,
+                bps: 1_608_000,
+                adjusted_duration_ms: 500.0,
+            },
+        ]
+    );
+}
+
+#[tokio::test]
+async fn progress_reports_one_safe_failure_and_preserves_accepted_points() {
+    let runner = Runner::new(
+        ScriptedTransport::new([
+            Ok(TimingObservation::from_millis(
+                20.0, 500.0, 0.0, 100_000, "HTTP/1.1",
+            )),
+            Err(TransportError::HttpStatus {
+                endpoint: "https://fixture.invalid/__down".to_owned(),
+                status: 403,
+                payload_bytes: 0,
+            }),
+        ]),
+        downloads(&[(100_000, 2, false)]),
+    )
+    .with_loaded_latency(false);
+    let (progress, receiver) = ProgressReporter::channel(256);
+
+    let outcome = runner
+        .run_with_progress(&CancellationToken::new(), progress)
+        .await;
+    let events: Vec<_> = receiver.into_iter().collect();
+
+    assert!(matches!(outcome.error, Some(RunnerError::Transport { .. })));
+    assert_eq!(outcome.result.raw.download.len(), 1);
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| matches!(event, ProgressEvent::RequestFailed { .. }))
+            .count(),
+        1
+    );
+    assert_eq!(
+        events.last(),
+        Some(&ProgressEvent::RequestFailed {
+            stage: ProgressStage::Transfer {
+                direction: Direction::Download,
+                requested_bytes: 100_000,
+            },
+            current: Some(2),
+            total: Some(2),
+            kind: ProgressFailureKind::HttpStatus(403),
+        })
+    );
+}
+
+#[tokio::test]
+async fn progress_reports_direction_finished_only_at_the_first_skipped_group() {
+    let runner = Runner::new(
+        ScriptedTransport::transfer_durations([1_001.0]),
+        downloads(&[
+            (100_000, 1, false),
+            (1_000_000, 1, false),
+            (10_000_000, 1, false),
+        ]),
+    )
+    .with_loaded_latency(false);
+    let (progress, receiver) = ProgressReporter::channel(256);
+
+    let outcome = runner
+        .run_with_progress(&CancellationToken::new(), progress)
+        .await;
+    let events: Vec<_> = receiver.into_iter().collect();
+
+    assert!(outcome.error.is_none());
+    assert_eq!(outcome.result.raw.download.len(), 1);
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| matches!(event, ProgressEvent::DirectionFinished { .. }))
+            .collect::<Vec<_>>(),
+        vec![&ProgressEvent::DirectionFinished {
+            direction: Direction::Download,
+        }]
+    );
+}
+
+#[tokio::test]
+async fn progress_reports_packet_loss_unavailable_once_without_a_point() {
+    let runner = Runner::new(
+        ScriptedTransport::new([]),
+        plan(vec![MeasurementStep::PacketLossUnsupported {
+            packets: 1_000,
+            responses_wait_ms: 3_000,
+        }]),
+    )
+    .with_loaded_latency(false);
+    let (progress, receiver) = ProgressReporter::channel(256);
+
+    let outcome = runner
+        .run_with_progress(&CancellationToken::new(), progress)
+        .await;
+    let events: Vec<_> = receiver.into_iter().collect();
+
+    assert!(outcome.error.is_none());
+    assert!(outcome.result.summary.packet_loss_ratio.is_none());
+    assert_eq!(events, vec![ProgressEvent::PacketLossUnavailable]);
 }

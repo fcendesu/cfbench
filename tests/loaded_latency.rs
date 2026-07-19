@@ -7,6 +7,7 @@ use cfbench::cancellation::CancellationToken;
 use cfbench::error::TransportError;
 use cfbench::measurement::TimingObservation;
 use cfbench::plan::{Direction, MeasurementPlan, MeasurementStep};
+use cfbench::progress::{ProgressEvent, ProgressReporter};
 use cfbench::runner::{MeasurementFuture, MeasurementTransport, Runner};
 
 type ScriptedTransfer = Result<(Duration, f64), TransportError>;
@@ -294,4 +295,74 @@ async fn later_transfer_failure_keeps_eligible_loaded_points_and_joins_probe() {
     assert_eq!(outcome.result.raw.download.len(), 1);
     assert!(!outcome.result.raw.download_loaded_latency.is_empty());
     assert_eq!(active.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test(start_paused = true)]
+async fn loaded_progress_is_direction_local_and_includes_ineligible_probes() {
+    let transport = TimedTransport::new([
+        (Duration::from_millis(300), 249.0),
+        (Duration::from_millis(300), 300.0),
+        (Duration::from_millis(300), 300.0),
+    ]);
+    let plan = MeasurementPlan {
+        upstream_version: "test",
+        upstream_commit: "test",
+        steps: vec![
+            MeasurementStep::Download {
+                bytes: 100_000,
+                count: 1,
+                bypass_finish: false,
+            },
+            MeasurementStep::Upload {
+                bytes: 100_000,
+                count: 1,
+                bypass_finish: false,
+            },
+            MeasurementStep::Download {
+                bytes: 1_000_000,
+                count: 1,
+                bypass_finish: false,
+            },
+        ],
+    };
+    let (progress, receiver) = ProgressReporter::channel(256);
+    let task = tokio::spawn(async move {
+        Runner::new(transport, plan)
+            .run_with_progress(&CancellationToken::new(), progress)
+            .await
+    });
+
+    for _ in 0..3 {
+        tokio::time::advance(Duration::from_millis(300)).await;
+        tokio::task::yield_now().await;
+    }
+    let outcome = task.await.unwrap();
+    let loaded_events: Vec<_> = receiver
+        .into_iter()
+        .filter(|event| matches!(event, ProgressEvent::LoadedLatencyCompleted { .. }))
+        .collect();
+
+    assert!(outcome.error.is_none());
+    assert_eq!(outcome.result.raw.download_loaded_latency.len(), 1);
+    assert_eq!(outcome.result.raw.upload_loaded_latency.len(), 1);
+    assert_eq!(
+        loaded_events,
+        vec![
+            ProgressEvent::LoadedLatencyCompleted {
+                direction: Direction::Download,
+                sequence: 1,
+                latency_ms: 10.0,
+            },
+            ProgressEvent::LoadedLatencyCompleted {
+                direction: Direction::Upload,
+                sequence: 1,
+                latency_ms: 10.0,
+            },
+            ProgressEvent::LoadedLatencyCompleted {
+                direction: Direction::Download,
+                sequence: 2,
+                latency_ms: 10.0,
+            },
+        ]
+    );
 }

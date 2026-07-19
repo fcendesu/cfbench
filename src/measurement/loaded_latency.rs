@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use tokio::task::JoinHandle;
@@ -6,6 +7,7 @@ use tokio::task::JoinHandle;
 use crate::cancellation::CancellationToken;
 use crate::error::TransportError;
 use crate::plan::Direction;
+use crate::progress::{ProgressEvent, ProgressReporter};
 use crate::results::LatencyPoint;
 use crate::runner::MeasurementTransport;
 
@@ -24,6 +26,8 @@ pub(crate) fn spawn_loaded_probe_loop<T>(
     transport: Arc<T>,
     direction: Direction,
     cancellation: CancellationToken,
+    progress: ProgressReporter,
+    sequence: Arc<AtomicU64>,
 ) -> JoinHandle<LoadedProbeOutcome>
 where
     T: MeasurementTransport,
@@ -46,7 +50,16 @@ where
                         outcome.ip_families.push(family.clone());
                     }
                     match crate::measurement::latency_point(observation) {
-                        Ok(point) => outcome.points.push(point),
+                        Ok(point) => {
+                            let latency_ms = point.ping_ms;
+                            let sequence = sequence.fetch_add(1, Ordering::Relaxed) + 1;
+                            progress.emit(ProgressEvent::LoadedLatencyCompleted {
+                                direction,
+                                sequence,
+                                latency_ms,
+                            });
+                            outcome.points.push(point);
+                        }
                         Err(error) => outcome.diagnostics.push(format!(
                             "loaded latency conversion failed during {} for endpoint {endpoint}: {error}",
                             direction_name(direction)
