@@ -123,7 +123,8 @@ impl ReqwestTransport {
             server_time,
             payload_bytes,
             http_version,
-        );
+        )
+        .with_endpoint(endpoint);
         Ok(with_ip_family(observation, ip_family))
     }
 
@@ -159,7 +160,8 @@ impl ReqwestTransport {
             server_time,
             bytes,
             http_version,
-        );
+        )
+        .with_endpoint(endpoint);
         Ok(with_ip_family(observation, ip_family))
     }
 

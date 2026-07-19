@@ -38,6 +38,7 @@ where
             let started = Instant::now();
             match transport.loaded_latency(direction, &cancellation).await {
                 Ok(observation) => {
+                    let endpoint = observation.endpoint.clone();
                     if let Some(version) = observation.http_version.as_ref() {
                         outcome.http_versions.push(version.clone());
                     }
@@ -46,15 +47,17 @@ where
                     }
                     match crate::measurement::latency_point(observation) {
                         Ok(point) => outcome.points.push(point),
-                        Err(error) => outcome
-                            .diagnostics
-                            .push(format!("loaded latency observation rejected: {error}")),
+                        Err(error) => outcome.diagnostics.push(format!(
+                            "loaded latency conversion failed during {} for endpoint {endpoint}: {error}",
+                            direction_name(direction)
+                        )),
                     }
                 }
                 Err(TransportError::Cancelled) if cancellation.is_cancelled() => break,
-                Err(error) => outcome
-                    .diagnostics
-                    .push(format!("loaded latency probe failed: {error}")),
+                Err(error) => outcome.diagnostics.push(format!(
+                    "loaded latency probe failed during {}: {error}",
+                    direction_name(direction)
+                )),
             }
 
             let remaining = PROBE_THROTTLE.saturating_sub(started.elapsed());
@@ -64,6 +67,13 @@ where
         }
         outcome
     })
+}
+
+const fn direction_name(direction: Direction) -> &'static str {
+    match direction {
+        Direction::Download => "download",
+        Direction::Upload => "upload",
+    }
 }
 
 async fn wait_or_cancel(duration: Duration, cancellation: &CancellationToken) -> bool {

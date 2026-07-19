@@ -4,6 +4,7 @@ use std::process::ExitCode;
 use cfbench::app::{OutputOptions, run_with_signal, write_outcome, write_progress};
 use cfbench::cli::Cli;
 use cfbench::config::RunConfig;
+use cfbench::error::TransportError;
 use cfbench::plan::default_cloudflare_plan;
 use cfbench::results::RunResult;
 use cfbench::runner::{RunOutcome, Runner};
@@ -40,7 +41,7 @@ async fn run(cli: Cli, config: RunConfig) -> ExitCode {
                 Runner::new(transport, plan).with_loaded_latency(!config.no_loaded_latency);
             run_with_signal(&runner, tokio::signal::ctrl_c()).await
         }
-        Err(error) => failed_outcome(format!("could not initialize transport: {error}")),
+        Err(error) => failed_outcome(error),
     };
 
     match write_outcome(
@@ -58,14 +59,15 @@ async fn run(cli: Cli, config: RunConfig) -> ExitCode {
     }
 }
 
-fn failed_outcome(message: String) -> RunOutcome {
+fn failed_outcome(source: TransportError) -> RunOutcome {
     let mut result = RunResult::empty();
-    result.failures.push(message.clone());
+    let error = cfbench::runner::RunnerError::Transport {
+        stage: "setup".to_owned(),
+        source,
+    };
+    result.failures.push(error.to_string());
     RunOutcome {
         result,
-        error: Some(cfbench::runner::RunnerError::Transport {
-            stage: "setup".to_owned(),
-            message,
-        }),
+        error: Some(error),
     }
 }

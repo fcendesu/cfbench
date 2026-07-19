@@ -228,6 +228,8 @@ async fn observation_records_contract_http_version_and_peer_ip_family() {
 
     assert_eq!(observation.http_version.as_deref(), Some("1.1"));
     assert_eq!(observation.ip_family.as_deref(), Some("ipv4"));
+    assert_eq!(observation.endpoint, format!("{}/__down", fixture.url()));
+    assert!(!observation.endpoint.contains('?'));
 }
 
 #[tokio::test]

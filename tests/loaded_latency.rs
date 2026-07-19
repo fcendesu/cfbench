@@ -21,6 +21,7 @@ struct TimedTransport {
     transfer_ip_family: &'static str,
     probe_http_version: &'static str,
     probe_ip_family: &'static str,
+    invalid_probe: bool,
 }
 
 impl TimedTransport {
@@ -34,6 +35,7 @@ impl TimedTransport {
             transfer_ip_family: "ipv4",
             probe_http_version: "1.1",
             probe_ip_family: "ipv4",
+            invalid_probe: false,
         }
     }
 }
@@ -59,10 +61,16 @@ impl MeasurementTransport for TimedTransport {
                 if cancellation.is_cancelled() {
                     Err(TransportError::Cancelled)
                 } else {
-                    Ok(
-                        TimingObservation::from_millis(12.0, 12.0, 2.0, 0, self.probe_http_version)
-                            .with_ip_family(self.probe_ip_family),
+                    let ttfb_ms = if self.invalid_probe { f64::NAN } else { 12.0 };
+                    Ok(TimingObservation::from_millis(
+                        ttfb_ms,
+                        12.0,
+                        2.0,
+                        0,
+                        self.probe_http_version,
                     )
+                    .with_ip_family(self.probe_ip_family)
+                    .with_endpoint("https://fixture.invalid/__down"))
                 }
             };
             self.active_probes.fetch_sub(1, Ordering::SeqCst);
@@ -175,6 +183,10 @@ async fn ineligible_group_discards_loaded_points_and_probe_errors_are_diagnostic
     assert!(outcome.error.is_none());
     assert!(outcome.result.raw.download_loaded_latency.is_empty());
     assert!(!outcome.result.diagnostics.is_empty());
+    let diagnostic = &outcome.result.diagnostics[0];
+    assert!(diagnostic.contains("during download"));
+    assert!(diagnostic.contains("https://fixture.invalid/__down"));
+    assert!(diagnostic.contains("response headers"));
 }
 
 #[tokio::test(start_paused = true)]
@@ -209,6 +221,32 @@ async fn loaded_probe_metadata_participates_in_run_aggregation() {
 
     assert_eq!(outcome.result.target.http_version.as_deref(), Some("mixed"));
     assert_eq!(outcome.result.target.ip_family.as_deref(), Some("mixed"));
+}
+
+#[tokio::test(start_paused = true)]
+async fn loaded_probe_conversion_diagnostic_includes_direction_endpoint_and_cause() {
+    let transport = TimedTransport {
+        invalid_probe: true,
+        ..TimedTransport::new([(Duration::from_millis(300), 300.0)])
+    };
+    let task = tokio::spawn(async move {
+        Runner::new(transport, download_plan(1))
+            .run(&CancellationToken::new())
+            .await
+    });
+    tokio::time::advance(Duration::from_millis(300)).await;
+    let outcome = task.await.unwrap();
+
+    let diagnostic = outcome
+        .result
+        .diagnostics
+        .iter()
+        .find(|diagnostic| diagnostic.contains("conversion"))
+        .unwrap();
+    assert!(diagnostic.contains("during download"));
+    assert!(diagnostic.contains("https://fixture.invalid/__down"));
+    assert!(diagnostic.contains("timing observation is invalid"));
+    assert!(!diagnostic.contains('?'));
 }
 
 #[tokio::test(start_paused = true)]

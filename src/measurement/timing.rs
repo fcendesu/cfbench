@@ -8,6 +8,7 @@ use crate::results::{BandwidthPoint, LatencyPoint};
 const TRANSFER_OVERHEAD_FACTOR: f64 = 1.005;
 const MIN_ADJUSTED_DURATION_MS: f64 = 0.01;
 const U64_EXCLUSIVE_UPPER_BOUND: f64 = 18_446_744_073_709_551_616.0;
+const FIXTURE_ENDPOINT: &str = "https://fixture.invalid/__down";
 
 /// Monotonic timing boundaries and payload accounting returned by a transport.
 #[derive(Clone, Debug)]
@@ -18,6 +19,7 @@ pub struct TimingObservation {
     pub payload_bytes: u64,
     pub http_version: Option<String>,
     pub ip_family: Option<String>,
+    pub endpoint: String,
     valid: bool,
 }
 
@@ -37,6 +39,7 @@ impl TimingObservation {
             payload_bytes,
             http_version,
             ip_family: None,
+            endpoint: FIXTURE_ENDPOINT.to_owned(),
             valid: true,
         }
     }
@@ -64,6 +67,7 @@ impl TimingObservation {
             payload_bytes,
             http_version: Some(http_version.into()),
             ip_family: None,
+            endpoint: FIXTURE_ENDPOINT.to_owned(),
             valid,
         }
     }
@@ -73,6 +77,34 @@ impl TimingObservation {
         self.ip_family = Some(ip_family.into());
         self
     }
+
+    /// Attaches a query- and credential-free endpoint provenance string.
+    pub fn with_endpoint(mut self, endpoint: impl Into<String>) -> Self {
+        self.endpoint = redact_endpoint(&endpoint.into());
+        self
+    }
+}
+
+fn redact_endpoint(endpoint: &str) -> String {
+    let without_fragment = endpoint.split('#').next().unwrap_or(endpoint);
+    let without_query = without_fragment
+        .split('?')
+        .next()
+        .unwrap_or(without_fragment);
+    let Some((scheme, remainder)) = without_query.split_once("://") else {
+        return FIXTURE_ENDPOINT.to_owned();
+    };
+    if !matches!(scheme, "http" | "https") {
+        return FIXTURE_ENDPOINT.to_owned();
+    }
+    let (authority, path) = remainder
+        .split_once('/')
+        .map_or((remainder, "/"), |(authority, path)| (authority, path));
+    let authority = authority.rsplit('@').next().unwrap_or_default();
+    if authority.is_empty() {
+        return FIXTURE_ENDPOINT.to_owned();
+    }
+    format!("{scheme}://{authority}/{}", path.trim_start_matches('/'))
 }
 
 fn duration_from_millis(milliseconds: f64) -> Option<Duration> {

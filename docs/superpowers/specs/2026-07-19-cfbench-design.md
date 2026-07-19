@@ -152,6 +152,7 @@ pub struct TimingObservation {
     pub server_time: Duration,
     pub payload_bytes: u64,
     pub http_version: Option<String>,
+    pub endpoint: String,
 }
 
 pub struct BandwidthPoint {

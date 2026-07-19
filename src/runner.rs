@@ -8,7 +8,9 @@ use thiserror::Error;
 use crate::cancellation::CancellationToken;
 use crate::error::TransportError;
 use crate::measurement::loaded_latency::{LoadedProbeOutcome, spawn_loaded_probe_loop};
-use crate::measurement::{TimingObservation, bandwidth_point, latency_point};
+use crate::measurement::{
+    MeasurementConversionError, TimingObservation, bandwidth_point, latency_point,
+};
 use crate::plan::{Direction, MeasurementPlan, MeasurementStep};
 use crate::results::{RunResult, reduce};
 use crate::transport::ReqwestTransport;
@@ -90,10 +92,19 @@ impl MeasurementTransport for ReqwestTransport {
 pub enum RunnerError {
     #[error("measurement cancelled during {stage}")]
     Cancelled { stage: String },
-    #[error("transport failed during {stage}: {message}")]
-    Transport { stage: String, message: String },
-    #[error("measurement conversion failed during {stage}: {message}")]
-    Conversion { stage: String, message: String },
+    #[error("transport failed during {stage}: {source}")]
+    Transport {
+        stage: String,
+        #[source]
+        source: TransportError,
+    },
+    #[error("measurement conversion failed during {stage} for endpoint {endpoint}: {source}")]
+    Conversion {
+        stage: String,
+        endpoint: String,
+        #[source]
+        source: MeasurementConversionError,
+    },
 }
 
 /// The always-available result envelope and an optional terminal failure.
@@ -228,6 +239,7 @@ where
             };
             let ip_family = observation.ip_family.clone();
             let http_version = observation.http_version.clone();
+            let endpoint = observation.endpoint.clone();
             update_ip_family(result, ip_family.as_deref());
             update_http_version(result, http_version.as_deref());
             let point = match latency_point(observation) {
@@ -235,7 +247,8 @@ where
                 Err(error) => {
                     return Some(RunnerError::Conversion {
                         stage: "latency".to_owned(),
-                        message: error.to_string(),
+                        endpoint,
+                        source: error,
                     });
                 }
             };
@@ -281,6 +294,7 @@ where
             };
             let ip_family = observation.ip_family.clone();
             let http_version = observation.http_version.clone();
+            let endpoint = observation.endpoint.clone();
             update_ip_family(result, ip_family.as_deref());
             update_http_version(result, http_version.as_deref());
             let point = match bandwidth_point(direction, bytes, observation) {
@@ -288,7 +302,8 @@ where
                 Err(error) => {
                     terminal_error = Some(RunnerError::Conversion {
                         stage: direction_name(direction).to_owned(),
-                        message: error.to_string(),
+                        endpoint,
+                        source: error,
                     });
                     break;
                 }
@@ -371,7 +386,7 @@ fn map_transport_error(stage: &str, error: TransportError) -> RunnerError {
         },
         error => RunnerError::Transport {
             stage: stage.to_owned(),
-            message: error.to_string(),
+            source: error,
         },
     }
 }
