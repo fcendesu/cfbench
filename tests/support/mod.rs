@@ -32,6 +32,7 @@ pub enum ResponsePlan {
         chunk_interval: Duration,
     },
     MultiServerTiming,
+    EarlyUploadSuccess,
     UploadEcho,
 }
 
@@ -114,6 +115,10 @@ impl FixtureServer {
         self.reached_stall.notified().await;
     }
 
+    pub async fn wait_until_first_body_chunk(&self) {
+        self.reached_stall.notified().await;
+    }
+
     pub fn unexpected_requests(&self) -> usize {
         self.unexpected_requests.load(Ordering::Relaxed)
     }
@@ -189,7 +194,11 @@ async fn serve(
                     format!("HTTP/1.1 200 OK\r\nContent-Length: {chunks}\r\n\r\n").as_bytes(),
                 )
                 .await?;
-            for _ in 0..chunks {
+            if chunks > 0 {
+                socket.write_all(&[0]).await?;
+                reached_stall.notify_one();
+            }
+            for _ in 1..chunks {
                 tokio::time::sleep(chunk_interval).await;
                 socket.write_all(&[0]).await?;
             }
@@ -200,6 +209,12 @@ async fn serve(
                     b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nServer-Timing: cache;desc=hit\r\nServer-Timing: cfRequestDuration;dur=2.5\r\n\r\n",
                 )
                 .await?;
+        }
+        ResponsePlan::EarlyUploadSuccess => {
+            socket
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")
+                .await?;
+            tokio::time::sleep(Duration::from_secs(1)).await;
         }
         ResponsePlan::UploadEcho => {
             let content_length = header(&headers, "content-length")

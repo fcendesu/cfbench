@@ -186,6 +186,10 @@ The initial one-packet latency estimate is replaced when the later 20-packet lat
 - Stop after the response body is complete.
 - Count bytes as the bounded upload stream yields them to reqwest; a successful
   upload must yield the configured payload count exactly.
+- A final 2xx response does not make a partially yielded request valid. After
+  response EOF, snapshot the yielded count once; if it differs from the
+  requested count, return an upload-specific payload-mismatch error, retain the
+  partial usage, and do not create a bandwidth point.
 
 ### Inclusion and reduction
 

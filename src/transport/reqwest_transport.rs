@@ -94,7 +94,7 @@ impl ReqwestTransport {
             };
             let Some(chunk) = chunk else { break };
             payload_bytes = payload_bytes.checked_add(chunk.len() as u64).ok_or(
-                TransportError::PayloadMismatch {
+                TransportError::DownloadPayloadMismatch {
                     endpoint: endpoint.clone(),
                     expected: bytes,
                     actual: u64::MAX,
@@ -104,7 +104,7 @@ impl ReqwestTransport {
         let total = started.elapsed();
 
         if payload_bytes != bytes {
-            return Err(TransportError::PayloadMismatch {
+            return Err(TransportError::DownloadPayloadMismatch {
                 endpoint,
                 expected: bytes,
                 actual: payload_bytes,
@@ -160,11 +160,20 @@ impl ReqwestTransport {
             .is_some()
         {}
 
+        let payload_bytes = yielded_bytes.load(Ordering::Relaxed);
+        if payload_bytes != bytes {
+            return Err(TransportError::UploadPayloadMismatch {
+                endpoint,
+                expected: bytes,
+                actual: payload_bytes,
+            });
+        }
+
         let observation = TimingObservation::new(
             headers_received,
             started.elapsed(),
             server_time,
-            yielded_bytes.load(Ordering::Relaxed),
+            payload_bytes,
             http_version,
         )
         .with_endpoint(endpoint);

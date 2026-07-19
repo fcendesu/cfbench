@@ -5,6 +5,8 @@ use std::time::Duration;
 
 use cfbench::config::{IpMode, RunConfig};
 use cfbench::error::TransportError;
+use cfbench::plan::{MeasurementPlan, MeasurementStep};
+use cfbench::runner::{Runner, RunnerError};
 use cfbench::transport::ReqwestTransport;
 use support::{FixtureServer, ResponsePlan};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -61,7 +63,7 @@ async fn download_counts_streamed_bytes_and_rejects_payload_mismatch() {
         .unwrap_err();
     assert!(matches!(
         &error,
-        TransportError::PayloadMismatch {
+        TransportError::DownloadPayloadMismatch {
             expected: 100_001,
             actual: 100_000,
             ..
@@ -154,7 +156,7 @@ async fn request_deadline_does_not_restart_for_each_body_chunk() {
         .unwrap_err();
 
     assert!(matches!(error, TransportError::BodyTimeout { .. }));
-    assert_eq!(error.payload_bytes(), 1);
+    assert!((1..3).contains(&error.payload_bytes()));
 }
 
 #[tokio::test]
@@ -170,6 +172,66 @@ async fn full_upload_before_stalled_response_accounts_yielded_bytes() {
 }
 
 #[tokio::test]
+async fn early_success_response_rejects_partially_yielded_upload() {
+    let server = FixtureServer::start(ResponsePlan::EarlyUploadSuccess).await;
+    let expected = 50_000_000;
+
+    let error = transport_for(&server, IpMode::V4Only, Duration::from_secs(2))
+        .upload(expected, &CancellationToken::new())
+        .await
+        .unwrap_err();
+
+    let TransportError::UploadPayloadMismatch {
+        endpoint,
+        expected: mismatch_expected,
+        actual,
+    } = &error
+    else {
+        panic!("expected upload payload mismatch, got {error:?}");
+    };
+    assert_eq!(*mismatch_expected, expected);
+    assert!(*actual < expected);
+    assert_eq!(error.payload_bytes(), *actual);
+    assert_eq!(endpoint, &format!("{}/__up", server.url()));
+    assert!(!endpoint.contains('?'));
+}
+
+#[tokio::test]
+async fn runner_keeps_partial_early_upload_usage_without_a_point() {
+    let server = FixtureServer::start(ResponsePlan::EarlyUploadSuccess).await;
+    let expected = 50_000_000;
+    let transport = transport_for(&server, IpMode::V4Only, Duration::from_secs(2));
+    let plan = MeasurementPlan {
+        upstream_version: "test",
+        upstream_commit: "test",
+        steps: vec![MeasurementStep::Upload {
+            bytes: expected,
+            count: 1,
+            bypass_finish: true,
+        }],
+    };
+
+    let outcome = Runner::new(transport, plan)
+        .with_loaded_latency(false)
+        .run(&CancellationToken::new())
+        .await;
+    let Some(RunnerError::Transport { source, .. }) = outcome.error.as_ref() else {
+        panic!("expected runner transport failure");
+    };
+
+    assert!(matches!(
+        source,
+        TransportError::UploadPayloadMismatch { .. }
+    ));
+    assert!(source.payload_bytes() < expected);
+    assert_eq!(
+        outcome.result.usage.upload_payload_bytes,
+        source.payload_bytes()
+    );
+    assert!(outcome.result.raw.upload.is_empty());
+}
+
+#[tokio::test]
 async fn cancelled_partial_download_reports_received_bytes() {
     let server = FixtureServer::start(ResponsePlan::Trickle {
         chunks: 3,
@@ -180,12 +242,12 @@ async fn cancelled_partial_download_reports_received_bytes() {
     let task_cancellation = cancellation.clone();
     let transport = transport_for(&server, IpMode::V4Only, Duration::from_secs(2));
     let task = tokio::spawn(async move { transport.download(3, None, &task_cancellation).await });
-    tokio::time::sleep(Duration::from_millis(150)).await;
+    server.wait_until_first_body_chunk().await;
     cancellation.cancel();
 
     let error = task.await.unwrap().unwrap_err();
     assert!(matches!(error, TransportError::Cancelled { .. }));
-    assert_eq!(error.payload_bytes(), 1);
+    assert!(error.payload_bytes() < 3);
 }
 
 #[tokio::test]

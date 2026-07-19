@@ -52,7 +52,15 @@ pub enum TransportError {
     #[error(
         "download payload mismatch from endpoint {endpoint}: expected {expected} bytes, received {actual}"
     )]
-    PayloadMismatch {
+    DownloadPayloadMismatch {
+        endpoint: String,
+        expected: u64,
+        actual: u64,
+    },
+    #[error(
+        "upload payload mismatch for endpoint {endpoint}: expected {expected} bytes, yielded {actual}"
+    )]
+    UploadPayloadMismatch {
         endpoint: String,
         expected: u64,
         actual: u64,
@@ -72,7 +80,8 @@ impl TransportError {
             | Self::Request { payload_bytes, .. }
             | Self::HttpStatus { payload_bytes, .. }
             | Self::BodyStream { payload_bytes, .. } => *payload_bytes,
-            Self::PayloadMismatch { actual, .. } => *actual,
+            Self::DownloadPayloadMismatch { actual, .. }
+            | Self::UploadPayloadMismatch { actual, .. } => *actual,
             Self::InvalidBaseUrl(_) | Self::ClientBuild(_) => 0,
         }
     }
