@@ -99,9 +99,18 @@ The CLI must support automatic selection, IPv4-only, and IPv6-only modes. `--ipv
 
 The normal output must consist of ordinary lines. It may show stage progress but must not use an alternate screen, cursor-addressed interface, interactive widgets, or a TUI framework.
 
+Ordinary text mode writes the opening status and individual request progress to
+stderr. Successful unloaded-latency, transfer, and loaded-latency requests use
+phase-local, payload-group-local, and direction-local counters respectively.
+Failures, adaptive-stop notices, and the unsupported packet-loss stage are
+reported immediately with safe categories. Progress uses a bounded nonblocking
+channel so a stalled stderr consumer cannot delay measurement timing or alter
+stored points.
+
 ### FR-7: JSON output
 
-`--json` must emit exactly one JSON document to stdout. Progress and diagnostics must go to stderr or be suppressed.
+`--json` must emit exactly one JSON document to stdout and suppress every
+progress line. Diagnostics remain on stderr.
 
 ### FR-8: Partial-feature reporting
 
@@ -114,6 +123,14 @@ Every network operation must have explicit bounds. Ctrl+C must cancel active wor
 ### FR-10: Data-use visibility
 
 Final output must show total payload bytes downloaded and uploaded. JSON must expose these as integers.
+
+### FR-11: Cloudflare request context
+
+Latency and download GETs must send a normalized same-origin `Referer`. Upload
+POSTs must send that `Referer` plus an `Origin` containing only scheme and
+authority. Neither header may contain credentials, a query, or a fragment.
+Request construction must remain outside the measured interval, and no failed
+measurement request may be retried.
 
 ## 8. CLI requirements
 
@@ -162,6 +179,22 @@ Duration:            16.42 s
 ```
 
 The display must not imply a manually selected data center. Edge metadata may be shown only when obtained reliably and must be marked as informational.
+
+Progress is separate from the final summary and uses these exact line forms:
+
+```text
+Testing against Cloudflare edge...
+[latency 1/20] 22.80 ms
+[download 100 KB 1/9] 91.42 Mbps — 11.0 ms
+[loaded/download 1] 25.40 ms
+[upload 1 MB 1/6] 328.09 Mbps — 24.5 ms
+[download 100 MB 1/3] failed — HTTP 403
+[download] larger payload groups skipped — request duration threshold reached
+[packet loss] unavailable — TURN not configured
+```
+
+`--quiet` and `--json` suppress the opening line and every request/stage
+progress line. They do not suppress final results, diagnostics, or fatal errors.
 
 ## 10. JSON contract
 
@@ -216,6 +249,15 @@ Target metadata aggregates every successful HTTP observation. A single observed 
 - Error messages must identify the stage, endpoint, and underlying error without printing secrets.
 - Endpoint context includes only scheme, authority, and path; measurement query parameters and URL credentials must not be printed.
 - Result diagnostics are written to stderr in text and JSON modes, including with `--quiet`; quiet mode suppresses progress only.
+- HTTP 403, 429, timeout, and stream failures are terminal for their scheduled
+  measurement request and are never retried.
+
+Live validation on 2026-07-19 found that a context-free 100 MB Cloudflare
+download returned HTTP 403 after earlier groups had successfully transferred
+169 MB. Adding either same-origin `Referer` or `Origin` made the headers request
+succeed; production GET behavior uses `Referer` to match browser request
+semantics without browser User-Agent impersonation. An ignored live acceptance
+guard checks the 100 MB response headers and drops the body immediately.
 
 ## 12. Quality requirements
 

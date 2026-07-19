@@ -11,6 +11,8 @@ The test suite must prove that `cfbench`:
 - streams large transfers without unbounded memory growth;
 - handles timing and concurrency deterministically where possible;
 - emits stable text and JSON contracts;
+- reports request progress without blocking measurements or contaminating
+  stdout;
 - fails safely under realistic network errors;
 - remains explicit about areas that cannot be exactly reproduced from a browser.
 
@@ -46,6 +48,8 @@ Async units with controlled clocks or local channels:
 - 250 ms loaded-transfer eligibility;
 - request timeout mapping;
 - partial-result accumulation.
+- bounded progress backpressure and closed-receiver behavior;
+- progress-renderer write failure cancellation and task joining.
 
 ### 2.3 Local HTTP integration tests
 
@@ -81,8 +85,9 @@ pointing the compiled binary at a local fixture.
 App-boundary tests assert:
 
 - JSON-only stdout;
-- progress on stderr;
-- quiet mode;
+- exact line-oriented progress on stderr;
+- `--quiet` and `--json` suppression of every progress line while diagnostics
+  remain visible;
 - exit codes;
 - partial result behavior;
 - no ANSI cursor-control sequences.
@@ -102,17 +107,31 @@ They verify only broad invariants:
 - non-negative timings;
 - at least one valid latency point;
 - summary values are finite and positive when the direction is enabled.
+- the 100 MB download accepts production's normalized same-origin request
+  context at the response-header boundary without reading the response body.
 
 They must never be required for ordinary CI because they consume data and depend on external networking.
 
-The MVP live set is intentionally bounded to a zero-byte latency probe, an
-exact-size 65,536-byte download, and a 65,536-byte upload. Run it explicitly:
+The MVP live set includes a zero-byte latency probe, an exact-size 65,536-byte
+download, and a 65,536-byte upload. A separate regression guard sends the 100 MB
+GET but drops the response immediately after headers, so it does not consume
+the advertised body. Run the live set explicitly:
 
 ```text
 cargo test --test live_cloudflare -- --ignored
 ```
 
 No live test uses the default plan or requests the 250 MB download group.
+
+Run only the request-context regression with:
+
+```text
+cargo test --test live_cloudflare live_large_download_accepts_browser_request_context -- --ignored --exact
+```
+
+The guard covers the HTTP 403 observed on 2026-07-19 when the same 100 MB GET
+omitted both `Referer` and `Origin`. It reuses production request construction,
+same-origin headers, absolute timeout, and explicit no-retry client policy.
 
 ## 3. Critical test cases
 
@@ -168,6 +187,19 @@ filtering of both transfer directions while retaining packet-loss metadata.
 5. Download and upload loaded points remain separate.
 6. Probe failures are recorded or discarded according to a defined rule without failing the bandwidth transfer automatically.
 
+### Progress
+
+1. Every accepted unloaded-latency and transfer point emits the documented
+   phase/group counter and value.
+2. Converted loaded probes use monotonic direction-local counters and may
+   interleave with transfer progress.
+3. Failures, adaptive stopping, and packet-loss unavailability use exact safe
+   line forms without URLs, response bodies, ANSI escapes, or carriage returns.
+4. A full or closed bounded channel never blocks measurement work or alters
+   stored results.
+5. Ordinary text writes progress only to stderr; `--quiet` and `--json` suppress
+   it completely while final output and diagnostics retain their contracts.
+
 ### Error handling
 
 1. DNS failure.
@@ -180,6 +212,7 @@ filtering of both transfer directions while retaining packet-loss metadata.
 8. Upload connection reset.
 9. Ctrl+C during latency, download, and upload.
 10. Malformed `Server-Timing`.
+11. HTTP 403 large-download request-context regression, ignored and live only.
 
 ## 4. Property tests
 
@@ -310,6 +343,9 @@ Current evidence status:
 - peak-memory measurement for the ignored 250 MB fixture: outstanding;
 - paired browser/native observations: outstanding;
 - live default-plan and loaded-latency evidence: outstanding.
+- ignored 100 MB header-only request-context coverage: available, with manual
+  live execution required because external service behavior is not a local
+  quality gate.
 
 The repository must not be described as `0.1.0` release-ready until the
 outstanding release evidence is collected and reviewed.

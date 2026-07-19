@@ -14,6 +14,10 @@ The MVP prioritizes measurement correctness, transparent limitations, determinis
 ### Measurement engine
 
 - Requests to `https://speed.cloudflare.com/__down` and `https://speed.cloudflare.com/__up`.
+- Normalized same-origin `Referer` on latency/download GETs and normalized
+  `Referer` plus scheme-and-authority-only `Origin` on upload POSTs.
+- At most one transport attempt per scheduled measurement; HTTP failures are
+  not retried.
 - Cloudflare's published default measurement order for:
   - initial latency estimation;
   - initial 100 KB download estimation;
@@ -36,6 +40,11 @@ The MVP prioritizes measurement correctness, transparent limitations, determinis
 ### CLI
 
 - Plain line-oriented terminal output.
+- Individual request progress on stderr with phase/group counters, safe failure
+  categories, one adaptive-stop notice per direction, and an explicit
+  packet-loss-unavailable notice.
+- A bounded nonblocking progress channel that drops progress rather than
+  perturbing measurement timing when stderr is slow.
 - `--ipv4` and `--ipv6`.
 - `--json`.
 - `--no-download` and `--no-upload`.
@@ -142,7 +151,9 @@ Loaded probes run concurrently with eligible transfers, use a 400 ms throttle, a
 
 ### AC-7: JSON cleanliness
 
-`cfbench --json` writes one parseable JSON document to stdout. No progress lines are mixed into stdout.
+`cfbench --json` writes one parseable JSON document to stdout and suppresses all
+progress. Ordinary text mode uses the documented exact stderr lines;
+`--quiet` suppresses all progress but preserves final results and diagnostics.
 
 ### AC-8: IP family
 
@@ -155,6 +166,14 @@ A timeout or interrupted stream produces a stage-specific error and no panic. Co
 ### AC-10: disclosure
 
 Help text and README identify `cfbench` as unofficial and describe native/browser timing differences.
+
+### AC-11: large-request context
+
+The 100 MB download uses the same normalized request context as ordinary
+production GETs, receives a successful header status from Cloudflare when the
+endpoint is available, and can drop the response immediately without consuming
+the body. The ignored live guard protects the HTTP 403 regression observed on
+2026-07-19 and is not an ordinary CI gate.
 
 ## Suggested implementation milestones
 

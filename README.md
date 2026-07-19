@@ -62,8 +62,32 @@ proxies because a proxy cannot guarantee the target connection's address
 family. Auto mode retains standard system proxy behavior. The timeout accepts
 1 through 300 seconds and is an absolute deadline for the complete request,
 including response-body streaming. Progress and diagnostics go to stderr;
-`--json` writes exactly one JSON document to stdout. `--quiet` suppresses
-progress, not the final result or fatal errors.
+`--json` writes exactly one JSON document to stdout and suppresses all progress.
+`--quiet` also suppresses every progress line, but not the final result,
+diagnostics, or fatal errors.
+
+## Progress output
+
+Ordinary text mode writes stable UTF-8 progress lines to stderr as individual
+requests complete. Loaded-latency probes may interleave with transfer results:
+
+```text
+Testing against Cloudflare edge...
+[latency 1/20] 22.80 ms
+[download 100 KB 1/9] 91.42 Mbps — 11.0 ms
+[loaded/download 1] 25.40 ms
+[upload 1 MB 1/6] 328.09 Mbps — 24.5 ms
+[loaded/upload 1] 26.60 ms
+[download 100 MB 1/3] failed — HTTP 403
+[download] larger payload groups skipped — request duration threshold reached
+[packet loss] unavailable — TURN not configured
+```
+
+The renderer uses no ANSI animation, cursor movement, carriage-return rewriting,
+or per-chunk output. Progress delivery uses a bounded nonblocking channel; if
+stderr stalls, a progress event may be dropped rather than delaying a measured
+request. Stored points, reductions, usage accounting, final output, and the
+terminal `error:` diagnostic are unaffected.
 
 ## Text output
 
@@ -157,6 +181,14 @@ The implementation is pinned to Cloudflare Speedtest `v1.11.0`, upstream commit 
 
 The schedule, thresholds, percentile rules, server-time handling, and loaded-latency behavior follow that baseline. Results are not expected to be numerically identical to `speed.cloudflare.com`: the browser implementation observes `PerformanceResourceTiming`, while `cfbench` measures native reqwest request, response-header, and streamed-body boundaries with monotonic time.
 
+Cloudflare's large download endpoint rejected a context-free 100 MB request
+with HTTP 403 during live validation on 2026-07-19. Production latency and
+download GETs therefore send a normalized same-origin `Referer`; upload POSTs
+send that `Referer` plus a scheme-and-authority-only `Origin`. These values
+contain no credentials, query, or fragment and are constructed before request
+timing starts. The transport never retries a rejected or failed measurement,
+including HTTP 403 and 429 responses.
+
 See [Measurement Compatibility](docs/MEASUREMENT_COMPATIBILITY.md) for exact rules and native equivalents.
 
 ## Architecture
@@ -178,7 +210,12 @@ cargo test --all-targets
 cargo build --release
 ```
 
-Live endpoint tests are ignored by default because they require Internet access and consume network resources. Run them explicitly with `cargo test --test live_cloudflare -- --ignored`.
+Live endpoint tests are ignored by default because they require Internet access
+and consume network resources. Run them explicitly with
+`cargo test --test live_cloudflare -- --ignored`. The large-download
+request-context guard reads only the 100 MB response headers and drops the body;
+it can be run alone with
+`cargo test --test live_cloudflare live_large_download_accepts_browser_request_context -- --ignored --exact`.
 
 Requirements, design, testing, and the reqwest decision are documented under [`docs/`](docs/).
 

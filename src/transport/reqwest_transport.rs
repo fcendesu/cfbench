@@ -71,16 +71,7 @@ impl ReqwestTransport {
         during: Option<&str>,
         cancellation: &CancellationToken,
     ) -> Result<TimingObservation, TransportError> {
-        let mut url = self.endpoint("__down")?;
-        {
-            let mut query = url.query_pairs_mut();
-            query.append_pair("bytes", &bytes.to_string());
-            if let Some(during) = during {
-                query.append_pair("during", during);
-            }
-        }
-        let endpoint = redacted_endpoint(&url);
-        let request = self.client.get(url).header(REFERER, self.referer.clone());
+        let (request, endpoint) = self.download_request(bytes, during)?;
 
         let started = Instant::now();
         let deadline = tokio::time::Instant::now() + self.request_timeout;
@@ -134,6 +125,27 @@ impl ReqwestTransport {
         )
         .with_endpoint(endpoint);
         Ok(with_ip_family(observation, ip_family))
+    }
+
+    /// Sends a production download request and returns after response headers arrive.
+    ///
+    /// This is intentionally hidden from generated documentation and exists for the
+    /// ignored live request-context acceptance guard. The response is dropped without
+    /// consuming its body.
+    #[doc(hidden)]
+    pub async fn probe_download_headers(
+        &self,
+        bytes: u64,
+    ) -> Result<reqwest::StatusCode, TransportError> {
+        let (request, endpoint) = self.download_request(bytes, None)?;
+        let cancellation = CancellationToken::new();
+        let deadline = tokio::time::Instant::now() + self.request_timeout;
+        let response = self
+            .send_headers(request, &endpoint, deadline, &cancellation)
+            .await?;
+        let status = response.status();
+        drop(response);
+        Ok(status)
     }
 
     pub async fn upload(
@@ -200,6 +212,24 @@ impl ReqwestTransport {
         self.base_url
             .join(path)
             .map_err(|error| TransportError::InvalidBaseUrl(error.to_string()))
+    }
+
+    fn download_request(
+        &self,
+        bytes: u64,
+        during: Option<&str>,
+    ) -> Result<(reqwest::RequestBuilder, String), TransportError> {
+        let mut url = self.endpoint("__down")?;
+        {
+            let mut query = url.query_pairs_mut();
+            query.append_pair("bytes", &bytes.to_string());
+            if let Some(during) = during {
+                query.append_pair("during", during);
+            }
+        }
+        let endpoint = redacted_endpoint(&url);
+        let request = self.client.get(url).header(REFERER, self.referer.clone());
+        Ok((request, endpoint))
     }
 
     async fn send_headers(
@@ -479,8 +509,8 @@ mod tests {
             .map(|(body, _)| body)
             .expect("locate download implementation");
         let request_builder = download_body
-            .find("let request = self.client.get")
-            .expect("download request builder");
+            .find("let (request, endpoint) = self.download_request(bytes, during)?;")
+            .expect("shared download request construction");
         let started = download_body
             .find("let started = Instant::now()")
             .expect("download timing start");

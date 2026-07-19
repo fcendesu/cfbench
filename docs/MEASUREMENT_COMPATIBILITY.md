@@ -27,6 +27,12 @@ Compatibility is divided into three levels:
 Requirements:
 
 - Set `Accept-Encoding: identity` where possible to avoid content encoding changing measured bytes.
+- Send `Referer: https://speed.cloudflare.com/` on latency and download GETs.
+- Send the same `Referer` plus `Origin: https://speed.cloudflare.com` on upload
+  POSTs. Compatible fixture transports derive both values from their base URL.
+- Normalize request context before timing: `Referer` is the base URL with a
+  trailing slash; `Origin` contains only scheme and authority; neither includes
+  credentials, query, or fragment.
 - Consume download bodies completely unless cancelled or timed out.
 - Consume upload responses completely even when the response body is small.
 - Reuse a single configured client and connection pool for the run.
@@ -36,6 +42,13 @@ Reqwest `0.13.4` enables protocol-NACK retries by default (up to two retries in
 addition to the original request). The production client builder must override
 that behavior with `reqwest::retry::never()` so each scheduled measurement
 operation makes at most one underlying transport attempt.
+
+On 2026-07-19, a context-free 100 MB live GET returned HTTP 403 after the
+preceding groups had transferred 169 MB. Headers-only probes showed 403 without
+request context and 2xx with `Referer`, `Origin`, or both. Production GETs use
+the same-origin `Referer` observed for the browser context; this correction does
+not add a browser User-Agent, move the timing start, or retry the rejected
+request.
 
 ## 3. Exact default schedule
 
@@ -256,6 +269,24 @@ The upstream schedule already begins with latency and a bypassed 100 KB download
 
 Record the negotiated HTTP version for each point when available. A run may include more than one version after connection failures or re-establishment, so summary metadata may be `mixed`.
 
+### Progress reporting integrity
+
+Ordinary text mode reports accepted requests and stage status through stable
+stderr lines such as:
+
+```text
+[latency 1/20] 22.80 ms
+[download 100 KB 1/9] 91.42 Mbps — 11.0 ms
+[loaded/download 1] 25.40 ms
+[upload 1 MB 1/6] 328.09 Mbps — 24.5 ms
+```
+
+`--quiet` and `--json` suppress all progress; diagnostics remain on stderr and
+JSON stdout remains one document. Event sending uses bounded nonblocking
+`try_send`, so slow output may drop a display event but cannot block a request,
+drop a raw point, change usage, or affect reductions. Request builders and
+headers are completed before monotonic measurement timing begins.
+
 ## 12. Cache and compression
 
 - Match upstream by using only the `bytes=<N>` query for ordinary measurements and adding `during=download` or `during=upload` for loaded probes; do not add a random cache-busting parameter.
@@ -300,10 +331,12 @@ It covers unloaded latency plus reducible download and upload points without
 adding a public endpoint override. The fixture rejects unknown request shapes,
 so the test also detects unexpected network activity.
 
-Ignored live tests use only a zero-byte latency probe, a 65,536-byte download,
-and a 65,536-byte upload. They assert endpoint and finite-timing invariants
-rather than speed values. They are excluded from ordinary CI because public
-network tests consume resources and are inherently variable.
+Ignored live tests use a zero-byte latency probe, a 65,536-byte download, and a
+65,536-byte upload. A separate 100,000,000-byte request-context regression guard
+waits only for successful response headers and drops the response without
+reading its body. The tests assert endpoint and finite-timing invariants rather
+than speed values. They are excluded from ordinary CI because public network
+tests depend on external service behavior and consume resources.
 
 ## 15. Primary references
 
