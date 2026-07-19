@@ -108,6 +108,78 @@ async fn runner_records_negotiated_ip_family_and_contract_http_version() {
 }
 
 #[tokio::test]
+async fn runner_aggregates_mixed_http_versions_and_ip_families() {
+    let observations = [
+        TimingObservation::from_millis(20.0, 30.0, 10.0, 0, "2").with_ip_family("ipv6"),
+        TimingObservation::from_millis(20.0, 30.0, 10.0, 0, "2").with_ip_family("ipv6"),
+        TimingObservation::from_millis(20.0, 30.0, 10.0, 0, "1.1").with_ip_family("ipv4"),
+        TimingObservation::from_millis(20.0, 30.0, 10.0, 0, "3").with_ip_family("ipv6"),
+    ];
+    let outcome = Runner::new(
+        ScriptedTransport::new(observations.into_iter().map(Ok)),
+        plan(vec![MeasurementStep::Latency { packets: 4 }]),
+    )
+    .with_loaded_latency(false)
+    .run(&CancellationToken::new())
+    .await;
+
+    assert_eq!(outcome.result.target.ip_family.as_deref(), Some("mixed"));
+    assert_eq!(outcome.result.target.http_version.as_deref(), Some("mixed"));
+}
+
+#[tokio::test]
+async fn runner_ignores_missing_metadata_and_no_observations_remain_null() {
+    let mut missing = TimingObservation::from_millis(20.0, 30.0, 10.0, 0, "2");
+    missing.http_version = None;
+    let outcome = Runner::new(
+        ScriptedTransport::new([
+            Ok(TimingObservation::from_millis(20.0, 30.0, 10.0, 0, "2").with_ip_family("ipv6")),
+            Ok(missing),
+        ]),
+        plan(vec![MeasurementStep::Latency { packets: 2 }]),
+    )
+    .with_loaded_latency(false)
+    .run(&CancellationToken::new())
+    .await;
+    assert_eq!(outcome.result.target.ip_family.as_deref(), Some("ipv6"));
+    assert_eq!(outcome.result.target.http_version.as_deref(), Some("2"));
+
+    let no_observations = Runner::new(
+        ScriptedTransport::new([]),
+        plan(vec![MeasurementStep::PacketLossUnsupported {
+            packets: 1_000,
+            responses_wait_ms: 3_000,
+        }]),
+    )
+    .with_loaded_latency(false)
+    .run(&CancellationToken::new())
+    .await;
+    assert!(no_observations.result.target.ip_family.is_none());
+    assert!(no_observations.result.target.http_version.is_none());
+}
+
+#[tokio::test]
+async fn conversion_rejected_observation_still_contributes_transport_metadata() {
+    let first = TimingObservation::from_millis(20.0, 30.0, 10.0, 0, "2").with_ip_family("ipv6");
+    let rejected =
+        TimingObservation::from_millis(f64::NAN, 30.0, 10.0, 0, "1.1").with_ip_family("ipv4");
+    let outcome = Runner::new(
+        ScriptedTransport::new([Ok(first), Ok(rejected)]),
+        plan(vec![MeasurementStep::Latency { packets: 2 }]),
+    )
+    .with_loaded_latency(false)
+    .run(&CancellationToken::new())
+    .await;
+
+    assert!(matches!(
+        outcome.error,
+        Some(RunnerError::Conversion { .. })
+    ));
+    assert_eq!(outcome.result.target.ip_family.as_deref(), Some("mixed"));
+    assert_eq!(outcome.result.target.http_version.as_deref(), Some("mixed"));
+}
+
+#[tokio::test]
 async fn finish_uses_strict_minimum_after_whole_group() {
     let transport = ScriptedTransport::transfer_durations([1001.0, 1500.0, 1000.0, 1100.0]);
     let outcome = Runner::new(
@@ -212,7 +284,9 @@ async fn failed_later_stage_preserves_completed_points() {
         Ok(TimingObservation::from_millis(
             20.0, 500.0, 0.0, 100_000, "HTTP/1.1",
         )),
-        Err(TransportError::BodyTimeout),
+        Err(TransportError::BodyTimeout {
+            endpoint: "https://fixture.invalid/__down".to_owned(),
+        }),
     ]);
     let outcome = Runner::new(
         transport,
@@ -244,7 +318,9 @@ async fn failed_twenty_packet_phase_keeps_completed_replacement_points() {
         Ok(TimingObservation::from_millis(
             30.0, 30.0, 10.0, 0, "HTTP/1.1",
         )),
-        Err(TransportError::HeaderTimeout),
+        Err(TransportError::HeaderTimeout {
+            endpoint: "https://fixture.invalid/__down".to_owned(),
+        }),
     ]);
     let outcome = Runner::new(
         transport,

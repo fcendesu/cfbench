@@ -52,15 +52,21 @@ async fn download_counts_streamed_bytes_and_rejects_payload_mismatch() {
         server_timing: None,
     })
     .await;
+    let error = transport_for(&mismatch, IpMode::V4Only, Duration::from_secs(1))
+        .download(100_001, None, &CancellationToken::new())
+        .await
+        .unwrap_err();
     assert!(matches!(
-        transport_for(&mismatch, IpMode::V4Only, Duration::from_secs(1))
-            .download(100_001, None, &CancellationToken::new())
-            .await,
-        Err(TransportError::PayloadMismatch {
+        &error,
+        TransportError::PayloadMismatch {
             expected: 100_001,
-            actual: 100_000
-        })
+            actual: 100_000,
+            ..
+        }
     ));
+    let message = error.to_string();
+    assert!(message.contains(&format!("{}/__down", mismatch.url())));
+    assert!(!message.contains("bytes="));
 }
 
 #[tokio::test]
@@ -71,12 +77,14 @@ async fn truncated_http_body_is_a_body_stream_failure() {
     })
     .await;
 
-    assert!(matches!(
-        transport_for(&server, IpMode::V4Only, Duration::from_secs(1))
-            .download(100_001, None, &CancellationToken::new())
-            .await,
-        Err(TransportError::BodyStream(_))
-    ));
+    let error = transport_for(&server, IpMode::V4Only, Duration::from_secs(1))
+        .download(100_001, None, &CancellationToken::new())
+        .await
+        .unwrap_err();
+    assert!(matches!(&error, TransportError::BodyStream { .. }));
+    let message = error.to_string();
+    assert!(message.contains(&format!("{}/__down", server.url())));
+    assert!(!message.contains("bytes="));
 }
 
 #[tokio::test]
@@ -92,7 +100,7 @@ async fn rejects_error_status_without_retrying() {
         transport_for(&server, IpMode::V4Only, Duration::from_secs(1))
             .latency(&CancellationToken::new())
             .await,
-        Err(TransportError::HttpStatus(503))
+        Err(TransportError::HttpStatus { status: 503, .. })
     ));
 }
 
@@ -103,7 +111,7 @@ async fn distinguishes_header_and_body_timeouts() {
         transport_for(&headers, IpMode::V4Only, Duration::from_millis(30))
             .latency(&CancellationToken::new())
             .await,
-        Err(TransportError::HeaderTimeout)
+        Err(TransportError::HeaderTimeout { .. })
     ));
 
     let body = FixtureServer::start(ResponsePlan::StallBody).await;
@@ -111,7 +119,7 @@ async fn distinguishes_header_and_body_timeouts() {
         transport_for(&body, IpMode::V4Only, Duration::from_millis(30))
             .download(1, None, &CancellationToken::new())
             .await,
-        Err(TransportError::BodyTimeout)
+        Err(TransportError::BodyTimeout { .. })
     ));
 }
 
@@ -202,7 +210,7 @@ async fn ipv4_only_reaches_ipv4_fixture_and_ipv6_only_cannot_fallback() {
         transport_for(&server, IpMode::V6Only, Duration::from_millis(100))
             .latency(&CancellationToken::new())
             .await,
-        Err(TransportError::Request(_))
+        Err(TransportError::Request { .. })
     ));
 }
 #[tokio::test]
@@ -220,4 +228,55 @@ async fn observation_records_contract_http_version_and_peer_ip_family() {
 
     assert_eq!(observation.http_version.as_deref(), Some("1.1"));
     assert_eq!(observation.ip_family.as_deref(), Some("ipv4"));
+}
+
+#[tokio::test]
+async fn transport_errors_include_redacted_endpoint_context() {
+    let headers = FixtureServer::start(ResponsePlan::DelayHeaders).await;
+    let error = transport_for(&headers, IpMode::V4Only, Duration::from_millis(20))
+        .download(123, Some("download"), &CancellationToken::new())
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains(&format!("{}/__down", headers.url())));
+    assert!(error.contains("response headers"));
+    assert!(!error.contains("bytes=123"));
+    assert!(!error.contains("during=download"));
+
+    let body = FixtureServer::start(ResponsePlan::StallBody).await;
+    let error = transport_for(&body, IpMode::V4Only, Duration::from_millis(20))
+        .download(1, None, &CancellationToken::new())
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains(&format!("{}/__down", body.url())));
+    assert!(error.contains("response body"));
+    assert!(!error.contains("bytes=1"));
+
+    let status = FixtureServer::start(ResponsePlan::Exact {
+        status: 503,
+        body_bytes: 0,
+        chunk_bytes: 1,
+        server_timing: None,
+    })
+    .await;
+    let error = transport_for(&status, IpMode::V4Only, Duration::from_secs(1))
+        .latency(&CancellationToken::new())
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains(&format!("{}/__down", status.url())));
+    assert!(error.contains("HTTP status 503"));
+    assert!(!error.contains("bytes=0"));
+
+    let unreachable = transport_for(&status, IpMode::V6Only, Duration::from_millis(50));
+    let error = unreachable
+        .download(987, Some("secret"), &CancellationToken::new())
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains(&format!("{}/__down", status.url())));
+    assert!(error.contains("HTTP request failed"));
+    assert!(!error.contains("bytes=987"));
+    assert!(!error.contains("secret"));
 }

@@ -84,18 +84,24 @@ impl ReqwestTransport {
                 query.append_pair("during", during);
             }
         }
+        let endpoint = redacted_endpoint(&url);
 
         let started = Instant::now();
         let response = self
-            .send_headers(self.client.get(url), cancellation)
+            .send_headers(self.client.get(url), &endpoint, cancellation)
             .await?;
         let headers_received = started.elapsed();
-        let (mut response, server_time, http_version, ip_family) = validate_response(response)?;
+        let (mut response, server_time, http_version, ip_family) =
+            validate_response(response, &endpoint)?;
 
         let mut payload_bytes = 0_u64;
-        while let Some(chunk) = self.next_chunk(&mut response, cancellation).await? {
+        while let Some(chunk) = self
+            .next_chunk(&mut response, &endpoint, cancellation)
+            .await?
+        {
             payload_bytes = payload_bytes.checked_add(chunk.len() as u64).ok_or(
                 TransportError::PayloadMismatch {
+                    endpoint: endpoint.clone(),
                     expected: bytes,
                     actual: u64::MAX,
                 },
@@ -105,6 +111,7 @@ impl ReqwestTransport {
 
         if payload_bytes != bytes {
             return Err(TransportError::PayloadMismatch {
+                endpoint,
                 expected: bytes,
                 actual: payload_bytes,
             });
@@ -126,6 +133,7 @@ impl ReqwestTransport {
         cancellation: &CancellationToken,
     ) -> Result<TimingObservation, TransportError> {
         let url = self.endpoint("__up")?;
+        let endpoint = redacted_endpoint(&url);
         let (stream, content_length) = stream_upload(bytes);
         let request = self
             .client
@@ -135,11 +143,12 @@ impl ReqwestTransport {
             .body(reqwest::Body::wrap_stream(stream));
 
         let started = Instant::now();
-        let response = self.send_headers(request, cancellation).await?;
+        let response = self.send_headers(request, &endpoint, cancellation).await?;
         let headers_received = started.elapsed();
-        let (mut response, server_time, http_version, ip_family) = validate_response(response)?;
+        let (mut response, server_time, http_version, ip_family) =
+            validate_response(response, &endpoint)?;
         while self
-            .next_chunk(&mut response, cancellation)
+            .next_chunk(&mut response, &endpoint, cancellation)
             .await?
             .is_some()
         {}
@@ -163,6 +172,7 @@ impl ReqwestTransport {
     async fn send_headers(
         &self,
         request: reqwest::RequestBuilder,
+        endpoint: &str,
         cancellation: &CancellationToken,
     ) -> Result<Response, TransportError> {
         tokio::select! {
@@ -170,8 +180,13 @@ impl ReqwestTransport {
             () = cancellation.cancelled() => Err(TransportError::Cancelled),
             result = tokio::time::timeout(self.request_timeout, request.send()) => {
                 match result {
-                    Err(_) => Err(TransportError::HeaderTimeout),
-                    Ok(Err(error)) => Err(TransportError::Request(error)),
+                    Err(_) => Err(TransportError::HeaderTimeout {
+                        endpoint: endpoint.to_owned(),
+                    }),
+                    Ok(Err(source)) => Err(TransportError::Request {
+                        endpoint: endpoint.to_owned(),
+                        source: source.without_url(),
+                    }),
                     Ok(Ok(response)) => Ok(response),
                 }
             }
@@ -181,15 +196,23 @@ impl ReqwestTransport {
     async fn next_chunk(
         &self,
         response: &mut Response,
+        endpoint: &str,
         cancellation: &CancellationToken,
     ) -> Result<Option<bytes::Bytes>, TransportError> {
-        poll_body_chunk(response.chunk(), self.request_timeout, cancellation).await
+        poll_body_chunk(
+            response.chunk(),
+            self.request_timeout,
+            endpoint,
+            cancellation,
+        )
+        .await
     }
 }
 
 async fn poll_body_chunk<F>(
     body_chunk: F,
     timeout: Duration,
+    endpoint: &str,
     cancellation: &CancellationToken,
 ) -> Result<Option<bytes::Bytes>, TransportError>
 where
@@ -200,8 +223,13 @@ where
         () = cancellation.cancelled() => Err(TransportError::Cancelled),
         result = tokio::time::timeout(timeout, body_chunk) => {
             match result {
-                Err(_) => Err(TransportError::BodyTimeout),
-                Ok(Err(error)) => Err(TransportError::BodyStream(error)),
+                Err(_) => Err(TransportError::BodyTimeout {
+                    endpoint: endpoint.to_owned(),
+                }),
+                Ok(Err(source)) => Err(TransportError::BodyStream {
+                    endpoint: endpoint.to_owned(),
+                    source: source.without_url(),
+                }),
                 Ok(Ok(chunk)) => Ok(chunk),
             }
         }
@@ -210,9 +238,13 @@ where
 
 fn validate_response(
     response: Response,
+    endpoint: &str,
 ) -> Result<(Response, Duration, Option<String>, Option<String>), TransportError> {
     if !response.status().is_success() {
-        return Err(TransportError::HttpStatus(response.status().as_u16()));
+        return Err(TransportError::HttpStatus {
+            endpoint: endpoint.to_owned(),
+            status: response.status().as_u16(),
+        });
     }
 
     let duration = server_duration(
@@ -250,6 +282,15 @@ fn with_ip_family(observation: TimingObservation, ip_family: Option<String>) -> 
     }
 }
 
+fn redacted_endpoint(url: &Url) -> String {
+    let mut endpoint = url.clone();
+    let _ = endpoint.set_username("");
+    let _ = endpoint.set_password(None);
+    endpoint.set_query(None);
+    endpoint.set_fragment(None);
+    endpoint.to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use std::future;
@@ -271,7 +312,13 @@ mod tests {
         };
 
         let task = tokio::spawn(async move {
-            poll_body_chunk(body_future, Duration::from_secs(30), &task_cancellation).await
+            poll_body_chunk(
+                body_future,
+                Duration::from_secs(30),
+                "https://speed.cloudflare.com/__down",
+                &task_cancellation,
+            )
+            .await
         });
         entered_body_poll.notified().await;
         cancellation.cancel();
@@ -281,5 +328,20 @@ mod tests {
             .expect("active body cancellation completes promptly")
             .expect("body poll task joins");
         assert!(matches!(result, Err(TransportError::Cancelled)));
+    }
+
+    #[test]
+    fn endpoint_redaction_removes_credentials_query_and_fragment() {
+        let url = Url::parse(
+            "https://user:password@speed.cloudflare.com/__down?bytes=250000000&secret=value#x",
+        )
+        .unwrap();
+
+        let endpoint = redacted_endpoint(&url);
+
+        assert_eq!(endpoint, "https://speed.cloudflare.com/__down");
+        assert!(!endpoint.contains("user"));
+        assert!(!endpoint.contains("password"));
+        assert!(!endpoint.contains("secret"));
     }
 }

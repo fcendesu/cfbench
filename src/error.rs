@@ -19,18 +19,32 @@ pub enum OutputError {
 pub enum TransportError {
     #[error("measurement was cancelled")]
     Cancelled,
-    #[error("timed out waiting for response headers")]
-    HeaderTimeout,
-    #[error("timed out while reading the response body")]
-    BodyTimeout,
-    #[error("HTTP request failed: {0}")]
-    Request(#[source] reqwest::Error),
-    #[error("endpoint returned HTTP status {0}")]
-    HttpStatus(u16),
-    #[error("response body stream failed: {0}")]
-    BodyStream(#[source] reqwest::Error),
-    #[error("download payload mismatch: expected {expected} bytes, received {actual}")]
-    PayloadMismatch { expected: u64, actual: u64 },
+    #[error("timed out waiting for response headers from endpoint {endpoint}")]
+    HeaderTimeout { endpoint: String },
+    #[error("timed out while reading the response body from endpoint {endpoint}")]
+    BodyTimeout { endpoint: String },
+    #[error("HTTP request failed for endpoint {endpoint}: {source}")]
+    Request {
+        endpoint: String,
+        #[source]
+        source: reqwest::Error,
+    },
+    #[error("endpoint {endpoint} returned HTTP status {status}")]
+    HttpStatus { endpoint: String, status: u16 },
+    #[error("response body stream failed for endpoint {endpoint}: {source}")]
+    BodyStream {
+        endpoint: String,
+        #[source]
+        source: reqwest::Error,
+    },
+    #[error(
+        "download payload mismatch from endpoint {endpoint}: expected {expected} bytes, received {actual}"
+    )]
+    PayloadMismatch {
+        endpoint: String,
+        expected: u64,
+        actual: u64,
+    },
     #[error("invalid transport base URL: {0}")]
     InvalidBaseUrl(String),
     #[error("could not build HTTP client: {0}")]

@@ -7,7 +7,7 @@ use thiserror::Error;
 use crate::cancellation::CancellationToken;
 use crate::error::OutputError;
 use crate::output::{render_json, render_text};
-use crate::runner::{MeasurementTransport, RunOutcome, Runner};
+use crate::runner::{MeasurementTransport, RunOutcome, Runner, RunnerError};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct OutputOptions {
@@ -47,6 +47,7 @@ where
         cancellation.cancel();
         let mut outcome = runner.run(&cancellation).await;
         record_signal_error(&mut outcome, signal);
+        ensure_cancelled_outcome(&mut outcome);
         return outcome;
     }
 
@@ -58,6 +59,7 @@ where
             cancellation.cancel();
             let mut outcome = run.await;
             record_signal_error(&mut outcome, signal);
+            ensure_cancelled_outcome(&mut outcome);
             outcome
         },
         outcome = &mut run => outcome,
@@ -89,6 +91,10 @@ pub fn write_outcome(
     }
     stdout.flush()?;
 
+    for diagnostic in &outcome.result.diagnostics {
+        writeln!(stderr, "diagnostic: {diagnostic}")?;
+    }
+
     match outcome.error {
         Some(error) => {
             writeln!(stderr, "error: {error}")?;
@@ -104,5 +110,15 @@ fn record_signal_error(outcome: &mut RunOutcome, signal: std::io::Result<()>) {
             .result
             .diagnostics
             .push(format!("could not install Ctrl+C handler: {error}"));
+    }
+}
+
+fn ensure_cancelled_outcome(outcome: &mut RunOutcome) {
+    if outcome.error.is_none() {
+        let error = RunnerError::Cancelled {
+            stage: "run".to_owned(),
+        };
+        outcome.result.failures.push(error.to_string());
+        outcome.error = Some(error);
     }
 }

@@ -204,6 +204,8 @@ The top-level schema must be versioned from the first release:
 
 Additive fields may be introduced without changing `schema_version`; breaking changes require a new schema version.
 
+Target metadata aggregates every successful HTTP observation. A single observed value is serialized normally, differing non-null values are serialized as `"mixed"`, missing observations are ignored, and a run with no observed value serializes `null`.
+
 ## 11. Error behavior
 
 - Invalid arguments: handled by Clap with exit code `2`.
@@ -212,6 +214,8 @@ Additive fields may be introduced without changing `schema_version`; breaking ch
 - Packet loss being unavailable is not an error in the MVP.
 - If one enabled bandwidth direction fails, the tool should print or serialize completed partial measurements and return exit code `1`.
 - Error messages must identify the stage, endpoint, and underlying error without printing secrets.
+- Endpoint context includes only scheme, authority, and path; measurement query parameters and URL credentials must not be printed.
+- Result diagnostics are written to stderr in text and JSON modes, including with `--quiet`; quiet mode suppresses progress only.
 
 ## 12. Quality requirements
 

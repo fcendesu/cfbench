@@ -17,6 +17,10 @@ struct TimedTransport {
     probe_starts: Arc<AtomicUsize>,
     active_probes: Arc<AtomicUsize>,
     fail_probe: bool,
+    transfer_http_version: &'static str,
+    transfer_ip_family: &'static str,
+    probe_http_version: &'static str,
+    probe_ip_family: &'static str,
 }
 
 impl TimedTransport {
@@ -26,6 +30,10 @@ impl TimedTransport {
             probe_starts: Arc::new(AtomicUsize::new(0)),
             active_probes: Arc::new(AtomicUsize::new(0)),
             fail_probe: false,
+            transfer_http_version: "1.1",
+            transfer_ip_family: "ipv4",
+            probe_http_version: "1.1",
+            probe_ip_family: "ipv4",
         }
     }
 }
@@ -44,14 +52,17 @@ impl MeasurementTransport for TimedTransport {
             self.probe_starts.fetch_add(1, Ordering::SeqCst);
             self.active_probes.fetch_add(1, Ordering::SeqCst);
             let result = if self.fail_probe {
-                Err(TransportError::HeaderTimeout)
+                Err(TransportError::HeaderTimeout {
+                    endpoint: "https://fixture.invalid/__down".to_owned(),
+                })
             } else {
                 if cancellation.is_cancelled() {
                     Err(TransportError::Cancelled)
                 } else {
-                    Ok(TimingObservation::from_millis(
-                        12.0, 12.0, 2.0, 0, "HTTP/1.1",
-                    ))
+                    Ok(
+                        TimingObservation::from_millis(12.0, 12.0, 2.0, 0, self.probe_http_version)
+                            .with_ip_family(self.probe_ip_family),
+                    )
                 }
             };
             self.active_probes.fetch_sub(1, Ordering::SeqCst);
@@ -70,7 +81,7 @@ impl MeasurementTransport for TimedTransport {
             let (wall_time, adjusted_ms) = scripted?;
             tokio::select! {
                 () = cancellation.cancelled() => Err(TransportError::Cancelled),
-                () = tokio::time::sleep(wall_time) => Ok(TimingObservation::from_millis(10.0, adjusted_ms, 0.0, bytes, "HTTP/1.1")),
+                () = tokio::time::sleep(wall_time) => Ok(TimingObservation::from_millis(10.0, adjusted_ms, 0.0, bytes, self.transfer_http_version).with_ip_family(self.transfer_ip_family)),
             }
         })
     }
@@ -180,6 +191,27 @@ async fn loaded_results_keep_only_latest_twenty() {
 }
 
 #[tokio::test(start_paused = true)]
+async fn loaded_probe_metadata_participates_in_run_aggregation() {
+    let transport = TimedTransport {
+        transfer_http_version: "2",
+        transfer_ip_family: "ipv6",
+        probe_http_version: "1.1",
+        probe_ip_family: "ipv4",
+        ..TimedTransport::new([(Duration::from_millis(300), 300.0)])
+    };
+    let task = tokio::spawn(async move {
+        Runner::new(transport, download_plan(1))
+            .run(&CancellationToken::new())
+            .await
+    });
+    tokio::time::advance(Duration::from_millis(300)).await;
+    let outcome = task.await.unwrap();
+
+    assert_eq!(outcome.result.target.http_version.as_deref(), Some("mixed"));
+    assert_eq!(outcome.result.target.ip_family.as_deref(), Some("mixed"));
+}
+
+#[tokio::test(start_paused = true)]
 async fn top_level_cancellation_stops_transfer_and_joins_probe() {
     let transport = TimedTransport::new([(Duration::from_secs(30), 30_000.0)]);
     let active = transport.active_probes.clone();
@@ -206,7 +238,9 @@ async fn later_transfer_failure_keeps_eligible_loaded_points_and_joins_probe() {
         .transfers
         .lock()
         .unwrap()
-        .push_back(Err(TransportError::BodyTimeout));
+        .push_back(Err(TransportError::BodyTimeout {
+            endpoint: "https://fixture.invalid/__down".to_owned(),
+        }));
     let active = transport.active_probes.clone();
     let task = tokio::spawn(async move {
         Runner::new(transport, download_plan(2))

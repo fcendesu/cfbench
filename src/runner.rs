@@ -227,6 +227,9 @@ where
                 Err(error) => return Some(map_transport_error("latency", error)),
             };
             let ip_family = observation.ip_family.clone();
+            let http_version = observation.http_version.clone();
+            update_ip_family(result, ip_family.as_deref());
+            update_http_version(result, http_version.as_deref());
             let point = match latency_point(observation) {
                 Ok(point) => point,
                 Err(error) => {
@@ -236,8 +239,6 @@ where
                     });
                 }
             };
-            update_ip_family(result, ip_family.as_deref());
-            update_http_version(result, point.http_version.as_deref());
             if initial_phase {
                 result.raw.initial_latency.push(point);
             } else {
@@ -279,6 +280,9 @@ where
                 }
             };
             let ip_family = observation.ip_family.clone();
+            let http_version = observation.http_version.clone();
+            update_ip_family(result, ip_family.as_deref());
+            update_http_version(result, http_version.as_deref());
             let point = match bandwidth_point(direction, bytes, observation) {
                 Ok(point) => point,
                 Err(error) => {
@@ -289,8 +293,6 @@ where
                     break;
                 }
             };
-            update_ip_family(result, ip_family.as_deref());
-            update_http_version(result, point.http_version.as_deref());
             durations.push(point.adjusted_duration_ms);
             match direction {
                 Direction::Download => {
@@ -317,10 +319,18 @@ where
                 Err(error) => LoadedProbeOutcome {
                     points: Vec::new(),
                     diagnostics: vec![format!("loaded latency task failed to join: {error}")],
+                    http_versions: Vec::new(),
+                    ip_families: Vec::new(),
                 },
             },
             None => LoadedProbeOutcome::default(),
         };
+        for version in &probe_outcome.http_versions {
+            update_http_version(result, Some(version));
+        }
+        for family in &probe_outcome.ip_families {
+            update_ip_family(result, Some(family));
+        }
         result.diagnostics.extend(probe_outcome.diagnostics);
 
         if !durations.is_empty()
@@ -372,14 +382,22 @@ fn record_failure(result: &mut RunResult, error: RunnerError) -> RunnerError {
 }
 
 fn update_http_version(result: &mut RunResult, version: Option<&str>) {
-    if result.target.http_version.is_none() {
-        result.target.http_version = version.map(ToOwned::to_owned);
-    }
+    merge_metadata(&mut result.target.http_version, version);
 }
 
 fn update_ip_family(result: &mut RunResult, family: Option<&str>) {
-    if result.target.ip_family.is_none() {
-        result.target.ip_family = family.map(ToOwned::to_owned);
+    merge_metadata(&mut result.target.ip_family, family);
+}
+
+fn merge_metadata(current: &mut Option<String>, observed: Option<&str>) {
+    let Some(observed) = observed else {
+        return;
+    };
+    match current.as_deref() {
+        None => *current = Some(observed.to_owned()),
+        Some("mixed") => {}
+        Some(existing) if existing == observed => {}
+        Some(_) => *current = Some("mixed".to_owned()),
     }
 }
 

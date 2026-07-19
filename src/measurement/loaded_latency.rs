@@ -16,6 +16,8 @@ const PROBE_THROTTLE: Duration = Duration::from_millis(400);
 pub(crate) struct LoadedProbeOutcome {
     pub points: Vec<LatencyPoint>,
     pub diagnostics: Vec<String>,
+    pub http_versions: Vec<String>,
+    pub ip_families: Vec<String>,
 }
 
 pub(crate) fn spawn_loaded_probe_loop<T>(
@@ -35,12 +37,20 @@ where
         loop {
             let started = Instant::now();
             match transport.loaded_latency(direction, &cancellation).await {
-                Ok(observation) => match crate::measurement::latency_point(observation) {
-                    Ok(point) => outcome.points.push(point),
-                    Err(error) => outcome
-                        .diagnostics
-                        .push(format!("loaded latency observation rejected: {error}")),
-                },
+                Ok(observation) => {
+                    if let Some(version) = observation.http_version.as_ref() {
+                        outcome.http_versions.push(version.clone());
+                    }
+                    if let Some(family) = observation.ip_family.as_ref() {
+                        outcome.ip_families.push(family.clone());
+                    }
+                    match crate::measurement::latency_point(observation) {
+                        Ok(point) => outcome.points.push(point),
+                        Err(error) => outcome
+                            .diagnostics
+                            .push(format!("loaded latency observation rejected: {error}")),
+                    }
+                }
                 Err(TransportError::Cancelled) if cancellation.is_cancelled() => break,
                 Err(error) => outcome
                     .diagnostics
