@@ -1,5 +1,8 @@
 use std::time::Duration;
 
+use crate::cli::Cli;
+use crate::error::ConfigError;
+
 /// Address-family policy for a measurement run.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum IpMode {
@@ -31,5 +34,34 @@ impl Default for RunConfig {
             no_upload: false,
             no_loaded_latency: false,
         }
+    }
+}
+
+impl TryFrom<Cli> for RunConfig {
+    type Error = ConfigError;
+
+    fn try_from(cli: Cli) -> Result<Self, Self::Error> {
+        if cli.ipv4 && cli.ipv6 {
+            return Err(ConfigError::ConflictingIpModes);
+        }
+        if !(1..=300).contains(&cli.timeout) {
+            return Err(ConfigError::InvalidTimeout(cli.timeout));
+        }
+
+        let ip_mode = if cli.ipv4 {
+            IpMode::V4Only
+        } else if cli.ipv6 {
+            IpMode::V6Only
+        } else {
+            IpMode::Auto
+        };
+
+        Ok(Self {
+            ip_mode,
+            request_timeout: Duration::from_secs(cli.timeout),
+            no_download: cli.no_download,
+            no_upload: cli.no_upload,
+            no_loaded_latency: cli.no_loaded_latency,
+        })
     }
 }

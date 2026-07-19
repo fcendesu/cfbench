@@ -1,0 +1,80 @@
+use assert_cmd::Command;
+use predicates::prelude::*;
+
+#[test]
+fn ip_family_flags_conflict() {
+    Command::cargo_bin("cfbench")
+        .unwrap()
+        .args(["--ipv4", "--ipv6"])
+        .assert()
+        .failure()
+        .code(2);
+}
+
+#[test]
+fn timeout_rejects_values_outside_one_through_three_hundred_seconds() {
+    for seconds in ["0", "301"] {
+        Command::cargo_bin("cfbench")
+            .unwrap()
+            .args(["--timeout", seconds])
+            .assert()
+            .failure()
+            .code(2);
+    }
+}
+
+#[test]
+fn help_discloses_unofficial_native_methodology() {
+    Command::cargo_bin("cfbench")
+        .unwrap()
+        .arg("--help")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("unofficial"))
+        .stdout(predicate::str::contains(
+            "Cloudflare-compatible methodology",
+        ))
+        .stdout(predicate::str::contains(
+            "native HTTP timing differs from browser timing",
+        ));
+}
+
+#[test]
+fn help_exposes_only_the_prd_flags() {
+    let output = Command::cargo_bin("cfbench")
+        .unwrap()
+        .arg("--help")
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8(output.stdout).unwrap();
+
+    for flag in [
+        "--ipv4",
+        "--ipv6",
+        "--json",
+        "--no-download",
+        "--no-upload",
+        "--no-loaded-latency",
+        "--timeout",
+        "--quiet",
+        "--help",
+        "--version",
+    ] {
+        assert!(stdout.contains(flag), "missing {flag} in help:\n{stdout}");
+    }
+    assert!(!stdout.contains("--base-url"));
+    assert!(!stdout.contains("--provider"));
+}
+
+#[test]
+fn version_uses_package_version() {
+    Command::cargo_bin("cfbench")
+        .unwrap()
+        .arg("--version")
+        .assert()
+        .success()
+        .stdout(predicate::eq(format!(
+            "cfbench {}\n",
+            env!("CARGO_PKG_VERSION")
+        )));
+}

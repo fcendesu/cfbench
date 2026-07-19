@@ -3,7 +3,7 @@ use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::time::{Duration, Instant};
 
 use reqwest::header::{ACCEPT_ENCODING, CONTENT_LENGTH, CONTENT_TYPE, HeaderMap, HeaderValue};
-use reqwest::{Client, Response, Url, redirect};
+use reqwest::{Client, Response, Url, Version, redirect};
 use tokio_util::sync::CancellationToken;
 
 use crate::config::{IpMode, RunConfig};
@@ -90,7 +90,7 @@ impl ReqwestTransport {
             .send_headers(self.client.get(url), cancellation)
             .await?;
         let headers_received = started.elapsed();
-        let (mut response, server_time, http_version) = validate_response(response)?;
+        let (mut response, server_time, http_version, ip_family) = validate_response(response)?;
 
         let mut payload_bytes = 0_u64;
         while let Some(chunk) = self.next_chunk(&mut response, cancellation).await? {
@@ -110,13 +110,14 @@ impl ReqwestTransport {
             });
         }
 
-        Ok(TimingObservation::new(
+        let observation = TimingObservation::new(
             headers_received,
             total,
             server_time,
             payload_bytes,
-            Some(http_version),
-        ))
+            http_version,
+        );
+        Ok(with_ip_family(observation, ip_family))
     }
 
     pub async fn upload(
@@ -136,20 +137,21 @@ impl ReqwestTransport {
         let started = Instant::now();
         let response = self.send_headers(request, cancellation).await?;
         let headers_received = started.elapsed();
-        let (mut response, server_time, http_version) = validate_response(response)?;
+        let (mut response, server_time, http_version, ip_family) = validate_response(response)?;
         while self
             .next_chunk(&mut response, cancellation)
             .await?
             .is_some()
         {}
 
-        Ok(TimingObservation::new(
+        let observation = TimingObservation::new(
             headers_received,
             started.elapsed(),
             server_time,
             bytes,
-            Some(http_version),
-        ))
+            http_version,
+        );
+        Ok(with_ip_family(observation, ip_family))
     }
 
     fn endpoint(&self, path: &str) -> Result<Url, TransportError> {
@@ -206,7 +208,9 @@ where
     }
 }
 
-fn validate_response(response: Response) -> Result<(Response, Duration, String), TransportError> {
+fn validate_response(
+    response: Response,
+) -> Result<(Response, Duration, Option<String>, Option<String>), TransportError> {
     if !response.status().is_success() {
         return Err(TransportError::HttpStatus(response.status().as_u16()));
     }
@@ -217,8 +221,33 @@ fn validate_response(response: Response) -> Result<(Response, Duration, String),
             .get(SERVER_TIMING)
             .and_then(|value| value.to_str().ok()),
     );
-    let version = format!("{:?}", response.version());
-    Ok((response, duration, version))
+    let version = contract_http_version(response.version()).map(ToOwned::to_owned);
+    let ip_family = response.remote_addr().map(|address| {
+        if address.is_ipv4() {
+            "ipv4".to_owned()
+        } else {
+            "ipv6".to_owned()
+        }
+    });
+    Ok((response, duration, version, ip_family))
+}
+
+fn contract_http_version(version: Version) -> Option<&'static str> {
+    match version {
+        Version::HTTP_09 => Some("0.9"),
+        Version::HTTP_10 => Some("1.0"),
+        Version::HTTP_11 => Some("1.1"),
+        Version::HTTP_2 => Some("2"),
+        Version::HTTP_3 => Some("3"),
+        _ => None,
+    }
+}
+
+fn with_ip_family(observation: TimingObservation, ip_family: Option<String>) -> TimingObservation {
+    match ip_family {
+        Some(ip_family) => observation.with_ip_family(ip_family),
+        None => observation,
+    }
 }
 
 #[cfg(test)]

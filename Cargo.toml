@@ -11,13 +11,16 @@ categories = ["command-line-utilities", "network-programming"]
 
 [dependencies]
 bytes = "1.11"
+clap = { version = "4.5", features = ["derive"] }
 futures-util = "0.3"
 reqwest = { version = "=0.13.4", default-features = false, features = ["http2", "rustls", "stream"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 thiserror = "2.0"
-tokio = { version = "1.49", features = ["macros", "net", "rt-multi-thread", "time", "io-util"] }
+tokio = { version = "1.49", features = ["io-util", "macros", "net", "rt-multi-thread", "signal", "time"] }
 tokio-util = { version = "0.7", features = ["rt"] }
 
 [dev-dependencies]
+assert_cmd = "2.1"
+predicates = "3.1"
 tokio = { version = "1.49", features = ["test-util"] }

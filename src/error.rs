@@ -1,5 +1,19 @@
 use thiserror::Error;
 
+#[derive(Debug, Error)]
+pub enum ConfigError {
+    #[error("--ipv4 and --ipv6 cannot be used together")]
+    ConflictingIpModes,
+    #[error("timeout must be between 1 and 300 seconds, received {0}")]
+    InvalidTimeout(u64),
+}
+
+#[derive(Debug, Error)]
+pub enum OutputError {
+    #[error("could not serialize result as JSON: {0}")]
+    Json(#[from] serde_json::Error),
+}
+
 /// Failures at a native HTTP measurement boundary.
 #[derive(Debug, Error)]
 pub enum TransportError {

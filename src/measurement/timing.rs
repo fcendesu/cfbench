@@ -17,6 +17,7 @@ pub struct TimingObservation {
     pub server_time: Duration,
     pub payload_bytes: u64,
     pub http_version: Option<String>,
+    pub ip_family: Option<String>,
     valid: bool,
 }
 
@@ -35,6 +36,7 @@ impl TimingObservation {
             server_time,
             payload_bytes,
             http_version,
+            ip_family: None,
             valid: true,
         }
     }
@@ -61,8 +63,15 @@ impl TimingObservation {
             server_time: server_time.unwrap_or_default(),
             payload_bytes,
             http_version: Some(http_version.into()),
+            ip_family: None,
             valid,
         }
+    }
+
+    /// Attaches the response peer's negotiated address family when observed.
+    pub fn with_ip_family(mut self, ip_family: impl Into<String>) -> Self {
+        self.ip_family = Some(ip_family.into());
+        self
     }
 }
 

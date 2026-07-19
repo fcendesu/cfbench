@@ -205,3 +205,19 @@ async fn ipv4_only_reaches_ipv4_fixture_and_ipv6_only_cannot_fallback() {
         Err(TransportError::Request(_))
     ));
 }
+#[tokio::test]
+async fn observation_records_contract_http_version_and_peer_ip_family() {
+    let fixture = FixtureServer::start(ResponsePlan::Exact {
+        status: 200,
+        body_bytes: 0,
+        chunk_bytes: 1,
+        server_timing: None,
+    })
+    .await;
+    let transport = ReqwestTransport::with_base_url(RunConfig::default(), fixture.url()).unwrap();
+
+    let observation = transport.latency(&CancellationToken::new()).await.unwrap();
+
+    assert_eq!(observation.http_version.as_deref(), Some("1.1"));
+    assert_eq!(observation.ip_family.as_deref(), Some("ipv4"));
+}

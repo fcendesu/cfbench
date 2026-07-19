@@ -49,6 +49,7 @@ Suggested source layout:
 ```text
 src/
 ├── main.rs
+├── app.rs
 ├── cli.rs
 ├── config.rs
 ├── error.rs
@@ -84,6 +85,10 @@ src/
 ### `cli`
 
 Owns Clap definitions and conversion into validated `RunConfig`. It contains no network logic.
+
+### `app`
+
+Owns the testable command boundary: signal installation and cooperative runner cancellation, progress routing, one-result stdout rendering, terminal diagnostics, and outcome-to-exit-status mapping. `main.rs` only wires production streams, signal handling, transport, and plan construction into this boundary.
 
 ### `plan`
 

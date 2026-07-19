@@ -226,6 +226,7 @@ where
                 Ok(observation) => observation,
                 Err(error) => return Some(map_transport_error("latency", error)),
             };
+            let ip_family = observation.ip_family.clone();
             let point = match latency_point(observation) {
                 Ok(point) => point,
                 Err(error) => {
@@ -235,6 +236,7 @@ where
                     });
                 }
             };
+            update_ip_family(result, ip_family.as_deref());
             update_http_version(result, point.http_version.as_deref());
             if initial_phase {
                 result.raw.initial_latency.push(point);
@@ -276,6 +278,7 @@ where
                     break;
                 }
             };
+            let ip_family = observation.ip_family.clone();
             let point = match bandwidth_point(direction, bytes, observation) {
                 Ok(point) => point,
                 Err(error) => {
@@ -286,6 +289,7 @@ where
                     break;
                 }
             };
+            update_ip_family(result, ip_family.as_deref());
             update_http_version(result, point.http_version.as_deref());
             durations.push(point.adjusted_duration_ms);
             match direction {
@@ -370,6 +374,12 @@ fn record_failure(result: &mut RunResult, error: RunnerError) -> RunnerError {
 fn update_http_version(result: &mut RunResult, version: Option<&str>) {
     if result.target.http_version.is_none() {
         result.target.http_version = version.map(ToOwned::to_owned);
+    }
+}
+
+fn update_ip_family(result: &mut RunResult, family: Option<&str>) {
+    if result.target.ip_family.is_none() {
+        result.target.ip_family = family.map(ToOwned::to_owned);
     }
 }
 

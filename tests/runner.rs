@@ -92,6 +92,22 @@ fn downloads(groups: &[(u64, u32, bool)]) -> MeasurementPlan {
 }
 
 #[tokio::test]
+async fn runner_records_negotiated_ip_family_and_contract_http_version() {
+    let observation =
+        TimingObservation::from_millis(20.0, 30.0, 10.0, 0, "2").with_ip_family("ipv6");
+    let outcome = Runner::new(
+        ScriptedTransport::new([Ok(observation)]),
+        plan(vec![MeasurementStep::Latency { packets: 1 }]),
+    )
+    .with_loaded_latency(false)
+    .run(&CancellationToken::new())
+    .await;
+
+    assert_eq!(outcome.result.target.ip_family.as_deref(), Some("ipv6"));
+    assert_eq!(outcome.result.target.http_version.as_deref(), Some("2"));
+}
+
+#[tokio::test]
 async fn finish_uses_strict_minimum_after_whole_group() {
     let transport = ScriptedTransport::transfer_durations([1001.0, 1500.0, 1000.0, 1100.0]);
     let outcome = Runner::new(
