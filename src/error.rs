@@ -67,6 +67,8 @@ pub enum TransportError {
     },
     #[error("invalid transport base URL: {0}")]
     InvalidBaseUrl(String),
+    #[error("could not construct a safe request context from the transport base URL")]
+    InvalidRequestContext,
     #[error("could not build HTTP client: {0}")]
     ClientBuild(#[source] reqwest::Error),
 }
@@ -82,7 +84,7 @@ impl TransportError {
             | Self::BodyStream { payload_bytes, .. } => *payload_bytes,
             Self::DownloadPayloadMismatch { actual, .. }
             | Self::UploadPayloadMismatch { actual, .. } => *actual,
-            Self::InvalidBaseUrl(_) | Self::ClientBuild(_) => 0,
+            Self::InvalidBaseUrl(_) | Self::InvalidRequestContext | Self::ClientBuild(_) => 0,
         }
     }
 

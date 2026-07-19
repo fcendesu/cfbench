@@ -35,6 +35,38 @@ fn transport_for(server: &FixtureServer, ip_mode: IpMode, timeout: Duration) -> 
 }
 
 #[tokio::test]
+async fn measurement_requests_send_safe_same_origin_context() {
+    let fixture = FixtureServer::cloudflare_compatible().await;
+    let transport =
+        ReqwestTransport::with_base_url(RunConfig::default(), fixture.url_with_test_context())
+            .unwrap();
+    let cancel = CancellationToken::new();
+
+    transport.download(100_000, None, &cancel).await.unwrap();
+    transport.upload(100_000, &cancel).await.unwrap();
+
+    let requests = fixture.requests().await;
+    let expected_referer = format!("{}/", fixture.url());
+    assert_eq!(requests.len(), 2);
+    assert_eq!(requests[0].method, "GET");
+    assert_eq!(requests[0].path, "/__down?bytes=100000");
+    assert_eq!(
+        requests[0].referer.as_deref(),
+        Some(expected_referer.as_str())
+    );
+    assert_eq!(requests[0].origin, None);
+    assert_eq!(requests[1].method, "POST");
+    assert_eq!(requests[1].path, "/__up");
+    assert_eq!(requests[1].referer, requests[0].referer);
+    assert_eq!(requests[1].origin.as_deref(), Some(fixture.url().as_str()));
+    assert!(
+        !requests
+            .iter()
+            .any(|request| format!("{request:?}").contains("secret"))
+    );
+}
+
+#[tokio::test]
 async fn download_counts_streamed_bytes_and_rejects_payload_mismatch() {
     let exact = FixtureServer::start(ResponsePlan::Exact {
         status: 200,

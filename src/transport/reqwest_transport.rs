@@ -3,7 +3,9 @@ use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
-use reqwest::header::{ACCEPT_ENCODING, CONTENT_LENGTH, CONTENT_TYPE, HeaderMap, HeaderValue};
+use reqwest::header::{
+    ACCEPT_ENCODING, CONTENT_LENGTH, CONTENT_TYPE, HeaderMap, HeaderValue, ORIGIN, REFERER,
+};
 use reqwest::{Client, Response, Url, Version, redirect};
 use tokio_util::sync::CancellationToken;
 
@@ -22,6 +24,8 @@ const SERVER_TIMING: &str = "server-timing";
 pub struct ReqwestTransport {
     client: Client,
     base_url: Url,
+    referer: HeaderValue,
+    origin: HeaderValue,
     request_timeout: Duration,
 }
 
@@ -37,10 +41,13 @@ impl ReqwestTransport {
     ) -> Result<Self, TransportError> {
         let base_url = Url::parse(base_url.as_ref())
             .map_err(|error| TransportError::InvalidBaseUrl(error.to_string()))?;
+        let (referer, origin) = request_context(&base_url)?;
         let client = build_measurement_client(&config).map_err(TransportError::ClientBuild)?;
         Ok(Self {
             client,
             base_url,
+            referer,
+            origin,
             request_timeout: config.request_timeout,
         })
     }
@@ -71,7 +78,12 @@ impl ReqwestTransport {
         let started = Instant::now();
         let deadline = tokio::time::Instant::now() + self.request_timeout;
         let response = self
-            .send_headers(self.client.get(url), &endpoint, deadline, cancellation)
+            .send_headers(
+                self.client.get(url).header(REFERER, self.referer.clone()),
+                &endpoint,
+                deadline,
+                cancellation,
+            )
             .await?;
         let headers_received = started.elapsed();
         let (mut response, server_time, http_version, ip_family) =
@@ -135,6 +147,8 @@ impl ReqwestTransport {
             .post(url)
             .header(CONTENT_TYPE, "text/plain;charset=UTF-8")
             .header(CONTENT_LENGTH, content_length)
+            .header(REFERER, self.referer.clone())
+            .header(ORIGIN, self.origin.clone())
             .body(reqwest::Body::wrap_stream(stream));
 
         let started = Instant::now();
@@ -352,6 +366,25 @@ fn redacted_endpoint(url: &Url) -> String {
     endpoint.set_query(None);
     endpoint.set_fragment(None);
     endpoint.to_string()
+}
+
+fn request_context(base_url: &Url) -> Result<(HeaderValue, HeaderValue), TransportError> {
+    let mut referer = base_url.clone();
+    referer
+        .set_username("")
+        .map_err(|_| TransportError::InvalidRequestContext)?;
+    referer
+        .set_password(None)
+        .map_err(|_| TransportError::InvalidRequestContext)?;
+    referer.set_path("/");
+    referer.set_query(None);
+    referer.set_fragment(None);
+    let origin = referer.origin().ascii_serialization();
+    Ok((
+        HeaderValue::from_str(referer.as_str())
+            .map_err(|_| TransportError::InvalidRequestContext)?,
+        HeaderValue::from_str(&origin).map_err(|_| TransportError::InvalidRequestContext)?,
+    ))
 }
 
 #[cfg(test)]

@@ -39,6 +39,7 @@ pub enum ResponsePlan {
 pub struct FixtureServer {
     address: SocketAddr,
     uploads: Arc<Mutex<Vec<UploadRequest>>>,
+    requests: Arc<Mutex<Vec<CapturedRequest>>>,
     reached_stall: Arc<Notify>,
     request_count: Arc<AtomicUsize>,
     unexpected_requests: Arc<AtomicUsize>,
@@ -50,6 +51,14 @@ pub struct UploadRequest {
     pub body_bytes: usize,
     pub content_type: Option<String>,
     pub accept_encoding: Option<String>,
+}
+
+#[derive(Clone, Debug)]
+pub struct CapturedRequest {
+    pub method: String,
+    pub path: String,
+    pub referer: Option<String>,
+    pub origin: Option<String>,
 }
 
 impl FixtureServer {
@@ -64,6 +73,8 @@ impl FixtureServer {
         let address = listener.local_addr().expect("fixture address");
         let uploads = Arc::new(Mutex::new(Vec::new()));
         let captured = uploads.clone();
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let captured_requests = requests.clone();
         let reached_stall = Arc::new(Notify::new());
         let server_reached_stall = reached_stall.clone();
         let request_count = Arc::new(AtomicUsize::new(0));
@@ -77,6 +88,7 @@ impl FixtureServer {
                 };
                 let plan = plan.clone();
                 let captured = captured.clone();
+                let captured_requests = captured_requests.clone();
                 let reached_stall = server_reached_stall.clone();
                 let request_count = server_request_count.clone();
                 let unexpected_requests = server_unexpected_requests.clone();
@@ -85,6 +97,7 @@ impl FixtureServer {
                         socket,
                         plan,
                         captured,
+                        captured_requests,
                         reached_stall,
                         request_count,
                         unexpected_requests,
@@ -96,6 +109,7 @@ impl FixtureServer {
         Self {
             address,
             uploads,
+            requests,
             reached_stall,
             request_count,
             unexpected_requests,
@@ -107,8 +121,16 @@ impl FixtureServer {
         format!("http://{}", self.address)
     }
 
+    pub fn url_with_test_context(&self) -> String {
+        format!("http://user:secret@{}/?query=secret#fragment", self.address)
+    }
+
     pub async fn uploads(&self) -> Vec<UploadRequest> {
         self.uploads.lock().await.clone()
+    }
+
+    pub async fn requests(&self) -> Vec<CapturedRequest> {
+        self.requests.lock().await.clone()
     }
 
     pub async fn wait_until_stalled(&self) {
@@ -138,12 +160,21 @@ async fn serve(
     mut socket: TcpStream,
     plan: ResponsePlan,
     uploads: Arc<Mutex<Vec<UploadRequest>>>,
+    requests: Arc<Mutex<Vec<CapturedRequest>>>,
     reached_stall: Arc<Notify>,
     request_count: Arc<AtomicUsize>,
     unexpected_requests: Arc<AtomicUsize>,
 ) -> io::Result<()> {
     let (headers, initial_body) = read_request(&mut socket).await?;
     request_count.fetch_add(1, Ordering::Relaxed);
+    let request_line = headers.lines().next().unwrap_or_default();
+    let mut request_parts = request_line.split_whitespace();
+    requests.lock().await.push(CapturedRequest {
+        method: request_parts.next().unwrap_or_default().to_owned(),
+        path: request_parts.next().unwrap_or_default().to_owned(),
+        referer: header(&headers, "referer").map(ToOwned::to_owned),
+        origin: header(&headers, "origin").map(ToOwned::to_owned),
+    });
     match plan {
         ResponsePlan::CloudflareCompatible => {
             serve_cloudflare_compatible(
