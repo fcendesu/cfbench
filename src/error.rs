@@ -18,22 +18,34 @@ pub enum OutputError {
 #[derive(Debug, Error)]
 pub enum TransportError {
     #[error("measurement was cancelled")]
-    Cancelled,
+    Cancelled { payload_bytes: u64 },
     #[error("timed out waiting for response headers from endpoint {endpoint}")]
-    HeaderTimeout { endpoint: String },
+    HeaderTimeout {
+        endpoint: String,
+        payload_bytes: u64,
+    },
     #[error("timed out while reading the response body from endpoint {endpoint}")]
-    BodyTimeout { endpoint: String },
+    BodyTimeout {
+        endpoint: String,
+        payload_bytes: u64,
+    },
     #[error("HTTP request failed for endpoint {endpoint}: {source}")]
     Request {
         endpoint: String,
+        payload_bytes: u64,
         #[source]
         source: reqwest::Error,
     },
     #[error("endpoint {endpoint} returned HTTP status {status}")]
-    HttpStatus { endpoint: String, status: u16 },
+    HttpStatus {
+        endpoint: String,
+        status: u16,
+        payload_bytes: u64,
+    },
     #[error("response body stream failed for endpoint {endpoint}: {source}")]
     BodyStream {
         endpoint: String,
+        payload_bytes: u64,
         #[source]
         source: reqwest::Error,
     },
@@ -49,4 +61,55 @@ pub enum TransportError {
     InvalidBaseUrl(String),
     #[error("could not build HTTP client: {0}")]
     ClientBuild(#[source] reqwest::Error),
+}
+
+impl TransportError {
+    pub fn payload_bytes(&self) -> u64 {
+        match self {
+            Self::Cancelled { payload_bytes }
+            | Self::HeaderTimeout { payload_bytes, .. }
+            | Self::BodyTimeout { payload_bytes, .. }
+            | Self::Request { payload_bytes, .. }
+            | Self::HttpStatus { payload_bytes, .. }
+            | Self::BodyStream { payload_bytes, .. } => *payload_bytes,
+            Self::PayloadMismatch { actual, .. } => *actual,
+            Self::InvalidBaseUrl(_) | Self::ClientBuild(_) => 0,
+        }
+    }
+
+    pub(crate) fn with_payload(self, payload_bytes: u64) -> Self {
+        match self {
+            Self::Cancelled { .. } => Self::Cancelled { payload_bytes },
+            Self::HeaderTimeout { endpoint, .. } => Self::HeaderTimeout {
+                endpoint,
+                payload_bytes,
+            },
+            Self::BodyTimeout { endpoint, .. } => Self::BodyTimeout {
+                endpoint,
+                payload_bytes,
+            },
+            Self::Request {
+                endpoint, source, ..
+            } => Self::Request {
+                endpoint,
+                payload_bytes,
+                source,
+            },
+            Self::HttpStatus {
+                endpoint, status, ..
+            } => Self::HttpStatus {
+                endpoint,
+                status,
+                payload_bytes,
+            },
+            Self::BodyStream {
+                endpoint, source, ..
+            } => Self::BodyStream {
+                endpoint,
+                payload_bytes,
+                source,
+            },
+            error => error,
+        }
+    }
 }

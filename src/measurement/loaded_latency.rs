@@ -53,7 +53,7 @@ where
                         )),
                     }
                 }
-                Err(TransportError::Cancelled) if cancellation.is_cancelled() => break,
+                Err(TransportError::Cancelled { .. }) if cancellation.is_cancelled() => break,
                 Err(error) => outcome.diagnostics.push(format!(
                     "loaded latency probe failed during {}: {error}",
                     direction_name(direction)

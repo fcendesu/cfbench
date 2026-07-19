@@ -27,6 +27,11 @@ pub enum ResponsePlan {
     DelayHeaders,
     StallBody,
     StallUploadResponse,
+    Trickle {
+        chunks: usize,
+        chunk_interval: Duration,
+    },
+    MultiServerTiming,
     UploadEcho,
 }
 
@@ -174,6 +179,27 @@ async fn serve(
                 .await?;
             reached_stall.notify_one();
             std::future::pending::<()>().await;
+        }
+        ResponsePlan::Trickle {
+            chunks,
+            chunk_interval,
+        } => {
+            socket
+                .write_all(
+                    format!("HTTP/1.1 200 OK\r\nContent-Length: {chunks}\r\n\r\n").as_bytes(),
+                )
+                .await?;
+            for _ in 0..chunks {
+                tokio::time::sleep(chunk_interval).await;
+                socket.write_all(&[0]).await?;
+            }
+        }
+        ResponsePlan::MultiServerTiming => {
+            socket
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nServer-Timing: cache;desc=hit\r\nServer-Timing: cfRequestDuration;dur=2.5\r\n\r\n",
+                )
+                .await?;
         }
         ResponsePlan::UploadEcho => {
             let content_length = header(&headers, "content-length")

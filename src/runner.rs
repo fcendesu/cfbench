@@ -288,6 +288,20 @@ where
             let observation = match observation {
                 Ok(observation) => observation,
                 Err(error) => {
+                    match direction {
+                        Direction::Download => {
+                            result.usage.download_payload_bytes = result
+                                .usage
+                                .download_payload_bytes
+                                .saturating_add(error.payload_bytes());
+                        }
+                        Direction::Upload => {
+                            result.usage.upload_payload_bytes = result
+                                .usage
+                                .upload_payload_bytes
+                                .saturating_add(error.payload_bytes());
+                        }
+                    }
                     terminal_error = Some(map_transport_error(direction_name(direction), error));
                     break;
                 }
@@ -381,7 +395,7 @@ where
 
 fn map_transport_error(stage: &str, error: TransportError) -> RunnerError {
     match error {
-        TransportError::Cancelled => RunnerError::Cancelled {
+        TransportError::Cancelled { .. } => RunnerError::Cancelled {
             stage: stage.to_owned(),
         },
         error => RunnerError::Transport {

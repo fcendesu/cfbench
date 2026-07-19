@@ -1,5 +1,6 @@
 use std::future::Future;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
 use reqwest::header::{ACCEPT_ENCODING, CONTENT_LENGTH, CONTENT_TYPE, HeaderMap, HeaderValue};
@@ -68,18 +69,30 @@ impl ReqwestTransport {
         let endpoint = redacted_endpoint(&url);
 
         let started = Instant::now();
+        let deadline = tokio::time::Instant::now() + self.request_timeout;
         let response = self
-            .send_headers(self.client.get(url), &endpoint, cancellation)
+            .send_headers(self.client.get(url), &endpoint, deadline, cancellation)
             .await?;
         let headers_received = started.elapsed();
         let (mut response, server_time, http_version, ip_family) =
             validate_response(response, &endpoint)?;
 
         let mut payload_bytes = 0_u64;
-        while let Some(chunk) = self
-            .next_chunk(&mut response, &endpoint, cancellation)
-            .await?
-        {
+        loop {
+            let chunk = match self
+                .next_chunk(
+                    &mut response,
+                    &endpoint,
+                    deadline,
+                    payload_bytes,
+                    cancellation,
+                )
+                .await
+            {
+                Ok(chunk) => chunk,
+                Err(error) => return Err(error),
+            };
+            let Some(chunk) = chunk else { break };
             payload_bytes = payload_bytes.checked_add(chunk.len() as u64).ok_or(
                 TransportError::PayloadMismatch {
                     endpoint: endpoint.clone(),
@@ -116,7 +129,7 @@ impl ReqwestTransport {
     ) -> Result<TimingObservation, TransportError> {
         let url = self.endpoint("__up")?;
         let endpoint = redacted_endpoint(&url);
-        let (stream, content_length) = stream_upload(bytes);
+        let (stream, content_length, yielded_bytes) = stream_upload(bytes);
         let request = self
             .client
             .post(url)
@@ -125,13 +138,25 @@ impl ReqwestTransport {
             .body(reqwest::Body::wrap_stream(stream));
 
         let started = Instant::now();
-        let response = self.send_headers(request, &endpoint, cancellation).await?;
+        let deadline = tokio::time::Instant::now() + self.request_timeout;
+        let response = self
+            .send_headers(request, &endpoint, deadline, cancellation)
+            .await
+            .map_err(|error| error.with_payload(yielded_bytes.load(Ordering::Relaxed)))?;
         let headers_received = started.elapsed();
         let (mut response, server_time, http_version, ip_family) =
-            validate_response(response, &endpoint)?;
+            validate_response(response, &endpoint)
+                .map_err(|error| error.with_payload(yielded_bytes.load(Ordering::Relaxed)))?;
         while self
-            .next_chunk(&mut response, &endpoint, cancellation)
-            .await?
+            .next_chunk(
+                &mut response,
+                &endpoint,
+                deadline,
+                yielded_bytes.load(Ordering::Relaxed),
+                cancellation,
+            )
+            .await
+            .map_err(|error| error.with_payload(yielded_bytes.load(Ordering::Relaxed)))?
             .is_some()
         {}
 
@@ -139,7 +164,7 @@ impl ReqwestTransport {
             headers_received,
             started.elapsed(),
             server_time,
-            bytes,
+            yielded_bytes.load(Ordering::Relaxed),
             http_version,
         )
         .with_endpoint(endpoint);
@@ -156,18 +181,21 @@ impl ReqwestTransport {
         &self,
         request: reqwest::RequestBuilder,
         endpoint: &str,
+        deadline: tokio::time::Instant,
         cancellation: &CancellationToken,
     ) -> Result<Response, TransportError> {
         tokio::select! {
             biased;
-            () = cancellation.cancelled() => Err(TransportError::Cancelled),
-            result = tokio::time::timeout(self.request_timeout, request.send()) => {
+            () = cancellation.cancelled() => Err(TransportError::Cancelled { payload_bytes: 0 }),
+            result = tokio::time::timeout_at(deadline, request.send()) => {
                 match result {
                     Err(_) => Err(TransportError::HeaderTimeout {
                         endpoint: endpoint.to_owned(),
+                        payload_bytes: 0,
                     }),
                     Ok(Err(source)) => Err(TransportError::Request {
                         endpoint: endpoint.to_owned(),
+                        payload_bytes: 0,
                         source: source.without_url(),
                     }),
                     Ok(Ok(response)) => Ok(response),
@@ -180,12 +208,15 @@ impl ReqwestTransport {
         &self,
         response: &mut Response,
         endpoint: &str,
+        deadline: tokio::time::Instant,
+        payload_bytes: u64,
         cancellation: &CancellationToken,
     ) -> Result<Option<bytes::Bytes>, TransportError> {
         poll_body_chunk(
             response.chunk(),
-            self.request_timeout,
+            deadline,
             endpoint,
+            payload_bytes,
             cancellation,
         )
         .await
@@ -207,19 +238,28 @@ fn build_measurement_client(config: &RunConfig) -> Result<Client, reqwest::Error
         .no_deflate()
         .no_zstd();
 
-    builder = match config.ip_mode {
-        IpMode::Auto => builder,
-        IpMode::V4Only => builder.local_address(IpAddr::V4(Ipv4Addr::UNSPECIFIED)),
-        IpMode::V6Only => builder.local_address(IpAddr::V6(Ipv6Addr::UNSPECIFIED)),
-    };
+    builder = configure_ip_mode(builder, config.ip_mode);
 
     builder.build()
 }
 
+fn configure_ip_mode(builder: reqwest::ClientBuilder, ip_mode: IpMode) -> reqwest::ClientBuilder {
+    match ip_mode {
+        IpMode::Auto => builder,
+        IpMode::V4Only => builder
+            .no_proxy()
+            .local_address(IpAddr::V4(Ipv4Addr::UNSPECIFIED)),
+        IpMode::V6Only => builder
+            .no_proxy()
+            .local_address(IpAddr::V6(Ipv6Addr::UNSPECIFIED)),
+    }
+}
+
 async fn poll_body_chunk<F>(
     body_chunk: F,
-    timeout: Duration,
+    deadline: tokio::time::Instant,
     endpoint: &str,
+    payload_bytes: u64,
     cancellation: &CancellationToken,
 ) -> Result<Option<bytes::Bytes>, TransportError>
 where
@@ -227,14 +267,16 @@ where
 {
     tokio::select! {
         biased;
-        () = cancellation.cancelled() => Err(TransportError::Cancelled),
-        result = tokio::time::timeout(timeout, body_chunk) => {
+        () = cancellation.cancelled() => Err(TransportError::Cancelled { payload_bytes }),
+        result = tokio::time::timeout_at(deadline, body_chunk) => {
             match result {
                 Err(_) => Err(TransportError::BodyTimeout {
                     endpoint: endpoint.to_owned(),
+                    payload_bytes,
                 }),
                 Ok(Err(source)) => Err(TransportError::BodyStream {
                     endpoint: endpoint.to_owned(),
+                    payload_bytes,
                     source: source.without_url(),
                 }),
                 Ok(Ok(chunk)) => Ok(chunk),
@@ -251,14 +293,19 @@ fn validate_response(
         return Err(TransportError::HttpStatus {
             endpoint: endpoint.to_owned(),
             status: response.status().as_u16(),
+            payload_bytes: 0,
         });
     }
 
+    let combined_server_timing = response
+        .headers()
+        .get_all(SERVER_TIMING)
+        .iter()
+        .filter_map(|value| value.to_str().ok())
+        .collect::<Vec<_>>()
+        .join(",");
     let duration = server_duration(
-        response
-            .headers()
-            .get(SERVER_TIMING)
-            .and_then(|value| value.to_str().ok()),
+        (!combined_server_timing.is_empty()).then_some(combined_server_timing.as_str()),
     );
     let version = contract_http_version(response.version()).map(ToOwned::to_owned);
     let ip_family = response.remote_addr().map(|address| {
@@ -321,8 +368,9 @@ mod tests {
         let task = tokio::spawn(async move {
             poll_body_chunk(
                 body_future,
-                Duration::from_secs(30),
+                tokio::time::Instant::now() + Duration::from_secs(30),
                 "https://speed.cloudflare.com/__down",
+                0,
                 &task_cancellation,
             )
             .await
@@ -334,7 +382,7 @@ mod tests {
             .await
             .expect("active body cancellation completes promptly")
             .expect("body poll task joins");
-        assert!(matches!(result, Err(TransportError::Cancelled)));
+        assert!(matches!(result, Err(TransportError::Cancelled { .. })));
     }
 
     #[test]
@@ -363,5 +411,18 @@ mod tests {
         let no_retry_call = [".retry(reqwest::", "retry::never())"].concat();
 
         assert_eq!(builder_body.matches(&no_retry_call).count(), 1);
+    }
+
+    #[test]
+    fn forced_family_builder_contains_no_proxy_in_both_strict_arms() {
+        let source = include_str!("reqwest_transport.rs");
+        let family_body = source
+            .split_once("fn configure_ip_mode")
+            .and_then(|(_, rest)| rest.split_once("\nasync fn poll_body_chunk"))
+            .map(|(body, _)| body)
+            .expect("locate only strict-family client construction");
+        let no_proxy_call = [".no_", "proxy()"].concat();
+
+        assert_eq!(family_body.matches(&no_proxy_call).count(), 2);
     }
 }

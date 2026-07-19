@@ -196,6 +196,7 @@ async fn runner_transport_error_retains_typed_source_and_endpoint() {
     let outcome = Runner::new(
         ScriptedTransport::new([Err(TransportError::BodyTimeout {
             endpoint: "https://fixture.invalid/__down".to_owned(),
+            payload_bytes: 0,
         })]),
         plan(vec![MeasurementStep::Latency { packets: 1 }]),
     )
@@ -320,6 +321,7 @@ async fn failed_later_stage_preserves_completed_points() {
         )),
         Err(TransportError::BodyTimeout {
             endpoint: "https://fixture.invalid/__down".to_owned(),
+            payload_bytes: 25_000,
         }),
     ]);
     let outcome = Runner::new(
@@ -340,7 +342,24 @@ async fn failed_later_stage_preserves_completed_points() {
     assert!(matches!(outcome.error, Some(RunnerError::Transport { .. })));
     assert_eq!(outcome.result.raw.initial_latency.len(), 1);
     assert_eq!(outcome.result.raw.download.len(), 1);
+    assert_eq!(outcome.result.usage.download_payload_bytes, 125_000);
     assert_eq!(outcome.result.failures.len(), 1);
+}
+
+#[tokio::test]
+async fn successful_transfer_usage_is_not_double_counted() {
+    let outcome = Runner::new(
+        ScriptedTransport::new([Ok(TimingObservation::from_millis(
+            20.0, 500.0, 0.0, 100_000, "HTTP/1.1",
+        ))]),
+        downloads(&[(100_000, 1, true)]),
+    )
+    .with_loaded_latency(false)
+    .run(&CancellationToken::new())
+    .await;
+
+    assert!(outcome.error.is_none());
+    assert_eq!(outcome.result.usage.download_payload_bytes, 100_000);
 }
 
 #[tokio::test]
@@ -354,6 +373,7 @@ async fn failed_twenty_packet_phase_keeps_completed_replacement_points() {
         )),
         Err(TransportError::HeaderTimeout {
             endpoint: "https://fixture.invalid/__down".to_owned(),
+            payload_bytes: 0,
         }),
     ]);
     let outcome = Runner::new(

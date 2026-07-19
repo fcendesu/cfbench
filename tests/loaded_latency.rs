@@ -56,10 +56,11 @@ impl MeasurementTransport for TimedTransport {
             let result = if self.fail_probe {
                 Err(TransportError::HeaderTimeout {
                     endpoint: "https://fixture.invalid/__down".to_owned(),
+                    payload_bytes: 0,
                 })
             } else {
                 if cancellation.is_cancelled() {
-                    Err(TransportError::Cancelled)
+                    Err(TransportError::Cancelled { payload_bytes: 0 })
                 } else {
                     let ttfb_ms = if self.invalid_probe { f64::NAN } else { 12.0 };
                     Ok(TimingObservation::from_millis(
@@ -88,7 +89,7 @@ impl MeasurementTransport for TimedTransport {
             let scripted = self.transfers.lock().unwrap().pop_front().unwrap();
             let (wall_time, adjusted_ms) = scripted?;
             tokio::select! {
-                () = cancellation.cancelled() => Err(TransportError::Cancelled),
+                () = cancellation.cancelled() => Err(TransportError::Cancelled { payload_bytes: 0 }),
                 () = tokio::time::sleep(wall_time) => Ok(TimingObservation::from_millis(10.0, adjusted_ms, 0.0, bytes, self.transfer_http_version).with_ip_family(self.transfer_ip_family)),
             }
         })
@@ -278,6 +279,7 @@ async fn later_transfer_failure_keeps_eligible_loaded_points_and_joins_probe() {
         .unwrap()
         .push_back(Err(TransportError::BodyTimeout {
             endpoint: "https://fixture.invalid/__down".to_owned(),
+            payload_bytes: 0,
         }));
     let active = transport.active_probes.clone();
     let task = tokio::spawn(async move {

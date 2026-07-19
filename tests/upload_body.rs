@@ -3,7 +3,7 @@ use futures_util::StreamExt;
 
 #[tokio::test]
 async fn upload_stream_emits_exact_length_without_payload_sized_buffer() {
-    let (mut body, content_length) = stream_upload(150_000);
+    let (mut body, content_length, yielded) = stream_upload(150_000);
     assert_eq!(content_length, 150_000);
 
     let mut lengths = Vec::new();
@@ -12,11 +12,13 @@ async fn upload_stream_emits_exact_length_without_payload_sized_buffer() {
     }
 
     assert_eq!(lengths, vec![65_536, 65_536, 18_928]);
+    assert_eq!(yielded.load(std::sync::atomic::Ordering::Relaxed), 150_000);
 }
 
 #[tokio::test]
 async fn zero_length_upload_stream_is_empty() {
-    let (mut body, content_length) = stream_upload(0);
+    let (mut body, content_length, yielded) = stream_upload(0);
     assert_eq!(content_length, 0);
     assert!(body.next().await.is_none());
+    assert_eq!(yielded.load(std::sync::atomic::Ordering::Relaxed), 0);
 }

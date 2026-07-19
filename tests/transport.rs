@@ -1,11 +1,14 @@
 mod support;
 
+use std::net::Ipv6Addr;
 use std::time::Duration;
 
 use cfbench::config::{IpMode, RunConfig};
 use cfbench::error::TransportError;
 use cfbench::transport::ReqwestTransport;
 use support::{FixtureServer, ResponsePlan};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::TcpListener;
 use tokio_util::sync::CancellationToken;
 
 #[test]
@@ -70,6 +73,18 @@ async fn download_counts_streamed_bytes_and_rejects_payload_mismatch() {
 }
 
 #[tokio::test]
+async fn later_server_timing_field_is_used_when_first_has_no_duration() {
+    let server = FixtureServer::start(ResponsePlan::MultiServerTiming).await;
+
+    let observation = transport_for(&server, IpMode::V4Only, Duration::from_secs(1))
+        .latency(&CancellationToken::new())
+        .await
+        .unwrap();
+
+    assert_eq!(observation.server_time, Duration::from_micros(2_500));
+}
+
+#[tokio::test]
 async fn truncated_http_body_is_a_body_stream_failure() {
     let server = FixtureServer::start(ResponsePlan::DeclaredLength {
         declared_bytes: 100_001,
@@ -82,6 +97,7 @@ async fn truncated_http_body_is_a_body_stream_failure() {
         .await
         .unwrap_err();
     assert!(matches!(&error, TransportError::BodyStream { .. }));
+    assert_eq!(error.payload_bytes(), 100_000);
     let message = error.to_string();
     assert!(message.contains(&format!("{}/__down", server.url())));
     assert!(!message.contains("bytes="));
@@ -125,6 +141,73 @@ async fn distinguishes_header_and_body_timeouts() {
 }
 
 #[tokio::test]
+async fn request_deadline_does_not_restart_for_each_body_chunk() {
+    let server = FixtureServer::start(ResponsePlan::Trickle {
+        chunks: 3,
+        chunk_interval: Duration::from_millis(100),
+    })
+    .await;
+
+    let error = transport_for(&server, IpMode::V4Only, Duration::from_millis(150))
+        .download(3, None, &CancellationToken::new())
+        .await
+        .unwrap_err();
+
+    assert!(matches!(error, TransportError::BodyTimeout { .. }));
+    assert_eq!(error.payload_bytes(), 1);
+}
+
+#[tokio::test]
+async fn full_upload_before_stalled_response_accounts_yielded_bytes() {
+    let server = FixtureServer::start(ResponsePlan::StallUploadResponse).await;
+
+    let error = transport_for(&server, IpMode::V4Only, Duration::from_millis(50))
+        .upload(150_000, &CancellationToken::new())
+        .await
+        .unwrap_err();
+
+    assert_eq!(error.payload_bytes(), 150_000);
+}
+
+#[tokio::test]
+async fn cancelled_partial_download_reports_received_bytes() {
+    let server = FixtureServer::start(ResponsePlan::Trickle {
+        chunks: 3,
+        chunk_interval: Duration::from_millis(100),
+    })
+    .await;
+    let cancellation = CancellationToken::new();
+    let task_cancellation = cancellation.clone();
+    let transport = transport_for(&server, IpMode::V4Only, Duration::from_secs(2));
+    let task = tokio::spawn(async move { transport.download(3, None, &task_cancellation).await });
+    tokio::time::sleep(Duration::from_millis(150)).await;
+    cancellation.cancel();
+
+    let error = task.await.unwrap().unwrap_err();
+    assert!(matches!(error, TransportError::Cancelled { .. }));
+    assert_eq!(error.payload_bytes(), 1);
+}
+
+#[tokio::test]
+#[ignore = "streams 250 MB; run explicitly under a platform memory tool"]
+async fn local_250_mb_download_streams_in_bounded_chunks() {
+    let server = FixtureServer::start(ResponsePlan::Exact {
+        status: 200,
+        body_bytes: 250_000_000,
+        chunk_bytes: 64 * 1024,
+        server_timing: Some("cfRequestDuration;dur=0"),
+    })
+    .await;
+
+    let observation = transport_for(&server, IpMode::V4Only, Duration::from_secs(30))
+        .download(250_000_000, None, &CancellationToken::new())
+        .await
+        .unwrap();
+
+    assert_eq!(observation.payload_bytes, 250_000_000);
+}
+
+#[tokio::test]
 async fn cancellation_preempts_waiting_for_headers() {
     let server = FixtureServer::start(ResponsePlan::DelayHeaders).await;
     let token = CancellationToken::new();
@@ -138,7 +221,7 @@ async fn cancellation_preempts_waiting_for_headers() {
         .await
         .expect("header cancellation completes promptly")
         .expect("transport task joins");
-    assert!(matches!(result, Err(TransportError::Cancelled)));
+    assert!(matches!(result, Err(TransportError::Cancelled { .. })));
 }
 
 #[tokio::test]
@@ -155,7 +238,7 @@ async fn cancellation_preempts_stalled_download_body() {
         .await
         .expect("download cancellation completes promptly")
         .expect("transport task joins");
-    assert!(matches!(result, Err(TransportError::Cancelled)));
+    assert!(matches!(result, Err(TransportError::Cancelled { .. })));
 }
 
 #[tokio::test]
@@ -172,7 +255,7 @@ async fn cancellation_preempts_stalled_upload_response_body() {
         .await
         .expect("upload cancellation completes promptly")
         .expect("transport task joins");
-    assert!(matches!(result, Err(TransportError::Cancelled)));
+    assert!(matches!(result, Err(TransportError::Cancelled { .. })));
 }
 
 #[tokio::test]
@@ -209,6 +292,39 @@ async fn ipv4_only_reaches_ipv4_fixture_and_ipv6_only_cannot_fallback() {
 
     assert!(matches!(
         transport_for(&server, IpMode::V6Only, Duration::from_millis(100))
+            .latency(&CancellationToken::new())
+            .await,
+        Err(TransportError::Request { .. })
+    ));
+}
+
+#[tokio::test]
+async fn ipv6_only_reaches_ipv6_fixture_and_ipv4_only_cannot_fallback() {
+    let Ok(listener) = TcpListener::bind((Ipv6Addr::LOCALHOST, 0)).await else {
+        return;
+    };
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        let (mut socket, _) = listener.accept().await.unwrap();
+        let mut request = [0_u8; 4096];
+        let _ = socket.read(&mut request).await.unwrap();
+        socket
+            .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+            .await
+            .unwrap();
+    });
+    let url = format!("http://[{0}]:{1}", address.ip(), address.port());
+
+    ReqwestTransport::with_base_url(config(IpMode::V6Only, Duration::from_secs(1)), &url)
+        .unwrap()
+        .latency(&CancellationToken::new())
+        .await
+        .expect("IPv6-only fixture connection");
+    server.await.unwrap();
+
+    assert!(matches!(
+        ReqwestTransport::with_base_url(config(IpMode::V4Only, Duration::from_millis(100)), &url,)
+            .unwrap()
             .latency(&CancellationToken::new())
             .await,
         Err(TransportError::Request { .. })

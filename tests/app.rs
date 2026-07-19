@@ -265,7 +265,7 @@ impl MeasurementTransport for InstallAwareTransport {
 }
 
 fn unused_measurement<'a>() -> MeasurementFuture<'a> {
-    Box::pin(async { Err(TransportError::Cancelled) })
+    Box::pin(async { Err(TransportError::Cancelled { payload_bytes: 0 }) })
 }
 
 struct ReadyWithFinalOperation(Arc<AtomicBool>);
@@ -345,6 +345,7 @@ impl MeasurementTransport for ErrorTransport {
             Err(TransportError::HttpStatus {
                 endpoint,
                 status: 503,
+                payload_bytes: 0,
             })
         })
     }
