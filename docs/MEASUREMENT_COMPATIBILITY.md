@@ -32,6 +32,11 @@ Requirements:
 - Reuse a single configured client and connection pool for the run.
 - Do not add retries around a measurement point. A retry is a new measurement and must be explicitly scheduled if ever supported.
 
+Reqwest `0.13.4` enables protocol-NACK retries by default (up to two retries in
+addition to the original request). The production client builder must override
+that behavior with `reqwest::retry::never()` so each scheduled measurement
+operation makes at most one underlying transport attempt.
+
 ## 3. Exact default schedule
 
 ```text

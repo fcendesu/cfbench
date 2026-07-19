@@ -36,26 +36,7 @@ impl ReqwestTransport {
     ) -> Result<Self, TransportError> {
         let base_url = Url::parse(base_url.as_ref())
             .map_err(|error| TransportError::InvalidBaseUrl(error.to_string()))?;
-        let mut default_headers = HeaderMap::new();
-        default_headers.insert(ACCEPT_ENCODING, HeaderValue::from_static("identity"));
-
-        let mut builder = Client::builder()
-            .use_rustls_tls()
-            .redirect(redirect::Policy::none())
-            .user_agent(concat!("cfbench/", env!("CARGO_PKG_VERSION")))
-            .default_headers(default_headers)
-            .no_gzip()
-            .no_brotli()
-            .no_deflate()
-            .no_zstd();
-
-        builder = match config.ip_mode {
-            IpMode::Auto => builder,
-            IpMode::V4Only => builder.local_address(IpAddr::V4(Ipv4Addr::UNSPECIFIED)),
-            IpMode::V6Only => builder.local_address(IpAddr::V6(Ipv6Addr::UNSPECIFIED)),
-        };
-
-        let client = builder.build().map_err(TransportError::ClientBuild)?;
+        let client = build_measurement_client(&config).map_err(TransportError::ClientBuild)?;
         Ok(Self {
             client,
             base_url,
@@ -211,6 +192,30 @@ impl ReqwestTransport {
     }
 }
 
+fn build_measurement_client(config: &RunConfig) -> Result<Client, reqwest::Error> {
+    let mut default_headers = HeaderMap::new();
+    default_headers.insert(ACCEPT_ENCODING, HeaderValue::from_static("identity"));
+
+    let mut builder = Client::builder()
+        .use_rustls_tls()
+        .redirect(redirect::Policy::none())
+        .retry(reqwest::retry::never())
+        .user_agent(concat!("cfbench/", env!("CARGO_PKG_VERSION")))
+        .default_headers(default_headers)
+        .no_gzip()
+        .no_brotli()
+        .no_deflate()
+        .no_zstd();
+
+    builder = match config.ip_mode {
+        IpMode::Auto => builder,
+        IpMode::V4Only => builder.local_address(IpAddr::V4(Ipv4Addr::UNSPECIFIED)),
+        IpMode::V6Only => builder.local_address(IpAddr::V6(Ipv6Addr::UNSPECIFIED)),
+    };
+
+    builder.build()
+}
+
 async fn poll_body_chunk<F>(
     body_chunk: F,
     timeout: Duration,
@@ -345,5 +350,11 @@ mod tests {
         assert!(!endpoint.contains("user"));
         assert!(!endpoint.contains("password"));
         assert!(!endpoint.contains("secret"));
+    }
+
+    #[test]
+    fn production_client_path_builds_with_retries_disabled() {
+        build_measurement_client(&RunConfig::default())
+            .expect("production reqwest client with retry::never policy");
     }
 }

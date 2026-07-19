@@ -102,6 +102,7 @@ async fn rejects_error_status_without_retrying() {
             .await,
         Err(TransportError::HttpStatus { status: 503, .. })
     ));
+    assert_eq!(server.request_count(), 1);
 }
 
 #[tokio::test]

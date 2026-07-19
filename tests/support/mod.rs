@@ -34,6 +34,7 @@ pub struct FixtureServer {
     address: SocketAddr,
     uploads: Arc<Mutex<Vec<UploadRequest>>>,
     reached_stall: Arc<Notify>,
+    request_count: Arc<AtomicUsize>,
     unexpected_requests: Arc<AtomicUsize>,
     task: tokio::task::JoinHandle<()>,
 }
@@ -59,6 +60,8 @@ impl FixtureServer {
         let captured = uploads.clone();
         let reached_stall = Arc::new(Notify::new());
         let server_reached_stall = reached_stall.clone();
+        let request_count = Arc::new(AtomicUsize::new(0));
+        let server_request_count = request_count.clone();
         let unexpected_requests = Arc::new(AtomicUsize::new(0));
         let server_unexpected_requests = unexpected_requests.clone();
         let task = tokio::spawn(async move {
@@ -69,9 +72,18 @@ impl FixtureServer {
                 let plan = plan.clone();
                 let captured = captured.clone();
                 let reached_stall = server_reached_stall.clone();
+                let request_count = server_request_count.clone();
                 let unexpected_requests = server_unexpected_requests.clone();
                 tokio::spawn(async move {
-                    let _ = serve(socket, plan, captured, reached_stall, unexpected_requests).await;
+                    let _ = serve(
+                        socket,
+                        plan,
+                        captured,
+                        reached_stall,
+                        request_count,
+                        unexpected_requests,
+                    )
+                    .await;
                 });
             }
         });
@@ -79,6 +91,7 @@ impl FixtureServer {
             address,
             uploads,
             reached_stall,
+            request_count,
             unexpected_requests,
             task,
         }
@@ -99,6 +112,10 @@ impl FixtureServer {
     pub fn unexpected_requests(&self) -> usize {
         self.unexpected_requests.load(Ordering::Relaxed)
     }
+
+    pub fn request_count(&self) -> usize {
+        self.request_count.load(Ordering::Relaxed)
+    }
 }
 
 impl Drop for FixtureServer {
@@ -112,9 +129,11 @@ async fn serve(
     plan: ResponsePlan,
     uploads: Arc<Mutex<Vec<UploadRequest>>>,
     reached_stall: Arc<Notify>,
+    request_count: Arc<AtomicUsize>,
     unexpected_requests: Arc<AtomicUsize>,
 ) -> io::Result<()> {
     let (headers, initial_body) = read_request(&mut socket).await?;
+    request_count.fetch_add(1, Ordering::Relaxed);
     match plan {
         ResponsePlan::CloudflareCompatible => {
             serve_cloudflare_compatible(
