@@ -39,8 +39,14 @@ impl ReqwestTransport {
         config: RunConfig,
         base_url: impl AsRef<str>,
     ) -> Result<Self, TransportError> {
-        let base_url = Url::parse(base_url.as_ref())
+        let mut base_url = Url::parse(base_url.as_ref())
             .map_err(|error| TransportError::InvalidBaseUrl(error.to_string()))?;
+        base_url
+            .set_username("")
+            .map_err(|_| TransportError::InvalidRequestContext)?;
+        base_url
+            .set_password(None)
+            .map_err(|_| TransportError::InvalidRequestContext)?;
         let (referer, origin) = request_context(&base_url)?;
         let client = build_measurement_client(&config).map_err(TransportError::ClientBuild)?;
         Ok(Self {
@@ -74,16 +80,12 @@ impl ReqwestTransport {
             }
         }
         let endpoint = redacted_endpoint(&url);
+        let request = self.client.get(url).header(REFERER, self.referer.clone());
 
         let started = Instant::now();
         let deadline = tokio::time::Instant::now() + self.request_timeout;
         let response = self
-            .send_headers(
-                self.client.get(url).header(REFERER, self.referer.clone()),
-                &endpoint,
-                deadline,
-                cancellation,
-            )
+            .send_headers(request, &endpoint, deadline, cancellation)
             .await?;
         let headers_received = started.elapsed();
         let (mut response, server_time, http_version, ip_family) =
@@ -466,5 +468,23 @@ mod tests {
         let no_proxy_call = [".no_", "proxy()"].concat();
 
         assert_eq!(family_body.matches(&no_proxy_call).count(), 2);
+    }
+
+    #[test]
+    fn download_request_is_constructed_before_measurement_timing_starts() {
+        let source = include_str!("reqwest_transport.rs");
+        let download_body = source
+            .split_once("pub async fn download(")
+            .and_then(|(_, rest)| rest.split_once("\n    pub async fn upload("))
+            .map(|(body, _)| body)
+            .expect("locate download implementation");
+        let request_builder = download_body
+            .find("let request = self.client.get")
+            .expect("download request builder");
+        let started = download_body
+            .find("let started = Instant::now()")
+            .expect("download timing start");
+
+        assert!(request_builder < started);
     }
 }

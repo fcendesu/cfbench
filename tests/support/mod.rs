@@ -59,6 +59,7 @@ pub struct CapturedRequest {
     pub path: String,
     pub referer: Option<String>,
     pub origin: Option<String>,
+    pub authorization: Option<String>,
 }
 
 impl FixtureServer {
@@ -174,6 +175,7 @@ async fn serve(
         path: request_parts.next().unwrap_or_default().to_owned(),
         referer: header(&headers, "referer").map(ToOwned::to_owned),
         origin: header(&headers, "origin").map(ToOwned::to_owned),
+        authorization: header(&headers, "authorization").map(ToOwned::to_owned),
     });
     match plan {
         ResponsePlan::CloudflareCompatible => {

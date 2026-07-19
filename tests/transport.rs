@@ -60,6 +60,11 @@ async fn measurement_requests_send_safe_same_origin_context() {
     assert_eq!(requests[1].referer, requests[0].referer);
     assert_eq!(requests[1].origin.as_deref(), Some(fixture.url().as_str()));
     assert!(
+        requests
+            .iter()
+            .all(|request| request.authorization.is_none())
+    );
+    assert!(
         !requests
             .iter()
             .any(|request| format!("{request:?}").contains("secret"))
