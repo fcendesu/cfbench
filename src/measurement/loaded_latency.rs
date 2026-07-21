@@ -5,6 +5,7 @@ use std::time::{Duration, Instant};
 use tokio::task::JoinHandle;
 
 use crate::cancellation::CancellationToken;
+use crate::clock::RunClock;
 use crate::error::TransportError;
 use crate::plan::Direction;
 use crate::progress::{ProgressEvent, ProgressFailureKind, ProgressReporter, ProgressStage};
@@ -28,6 +29,7 @@ pub(crate) fn spawn_loaded_probe_loop<T>(
     cancellation: CancellationToken,
     progress: ProgressReporter,
     sequence: Arc<AtomicU64>,
+    clock: RunClock,
 ) -> JoinHandle<LoadedProbeOutcome>
 where
     T: MeasurementTransport,
@@ -49,7 +51,7 @@ where
                     if let Some(family) = observation.ip_family.as_ref() {
                         outcome.ip_families.push(family.clone());
                     }
-                    match crate::measurement::latency_point(observation) {
+                    match crate::measurement::latency_point(observation, clock.now_unix_ms()) {
                         Ok(point) => {
                             let latency_ms = point.ping_ms;
                             let sequence = sequence.fetch_add(1, Ordering::Relaxed) + 1;

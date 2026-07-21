@@ -2,11 +2,11 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
-use std::time::Instant;
 
 use thiserror::Error;
 
 use crate::cancellation::CancellationToken;
+use crate::clock::RunClock;
 use crate::error::TransportError;
 use crate::measurement::loaded_latency::{LoadedProbeOutcome, spawn_loaded_probe_loop};
 use crate::measurement::{
@@ -126,6 +126,7 @@ pub struct Runner<T> {
 struct TransferProgress {
     reporter: ProgressReporter,
     loaded_sequence: Arc<AtomicU64>,
+    clock: RunClock,
 }
 
 impl<T> Runner<T>
@@ -155,10 +156,13 @@ where
         cancellation: &CancellationToken,
         progress: ProgressReporter,
     ) -> RunOutcome {
-        let started = Instant::now();
         let mut result = RunResult::empty();
-        let error = self.execute(&mut result, cancellation, &progress).await;
-        result.usage.duration_ms = started.elapsed().as_secs_f64() * 1_000.0;
+        let clock = RunClock::start();
+        result.started_at = clock.started_at().to_owned();
+        let error = self
+            .execute(&mut result, cancellation, &progress, &clock)
+            .await;
+        result.usage.duration_ms = clock.elapsed().as_secs_f64() * 1_000.0;
         result.summary = reduce(&result.raw);
 
         RunOutcome { result, error }
@@ -169,6 +173,7 @@ where
         result: &mut RunResult,
         cancellation: &CancellationToken,
         progress: &ProgressReporter,
+        clock: &RunClock,
     ) -> Option<RunnerError> {
         let mut download_finished = false;
         let mut upload_finished = false;
@@ -189,7 +194,7 @@ where
 
             let error = match *step {
                 MeasurementStep::Latency { packets } => {
-                    self.run_latency_phase(packets, result, cancellation, progress)
+                    self.run_latency_phase(packets, result, cancellation, progress, clock)
                         .await
                 }
                 MeasurementStep::Download {
@@ -207,6 +212,7 @@ where
                             TransferProgress {
                                 reporter: progress.clone(),
                                 loaded_sequence: download_loaded_sequence.clone(),
+                                clock: clock.clone(),
                             },
                         )
                         .await
@@ -235,6 +241,7 @@ where
                             TransferProgress {
                                 reporter: progress.clone(),
                                 loaded_sequence: upload_loaded_sequence.clone(),
+                                clock: clock.clone(),
                             },
                         )
                         .await
@@ -285,6 +292,7 @@ where
         result: &mut RunResult,
         cancellation: &CancellationToken,
         progress: &ProgressReporter,
+        clock: &RunClock,
     ) -> Option<RunnerError> {
         let initial_phase =
             packets == 1 && result.raw.initial_latency.is_empty() && result.raw.latency.is_empty();
@@ -318,7 +326,7 @@ where
             let endpoint = observation.endpoint.clone();
             update_ip_family(result, ip_family.as_deref());
             update_http_version(result, http_version.as_deref());
-            let point = match latency_point(observation) {
+            let point = match latency_point(observation, clock.now_unix_ms()) {
                 Ok(point) => point,
                 Err(error) => {
                     return Some(record_request_failure(
@@ -363,6 +371,7 @@ where
         let TransferProgress {
             reporter,
             loaded_sequence,
+            clock,
         } = progress;
         let group_cancellation = cancellation.child_token();
         let probe_task = self.loaded_latency.then(|| {
@@ -372,6 +381,7 @@ where
                 group_cancellation.clone(),
                 reporter.clone(),
                 loaded_sequence,
+                clock.clone(),
             )
         });
         let mut durations = Vec::with_capacity(count as usize);
@@ -422,7 +432,7 @@ where
             let endpoint = observation.endpoint.clone();
             update_ip_family(result, ip_family.as_deref());
             update_http_version(result, http_version.as_deref());
-            let point = match bandwidth_point(direction, bytes, observation) {
+            let point = match bandwidth_point(direction, bytes, observation, clock.now_unix_ms()) {
                 Ok(point) => point,
                 Err(error) => {
                     terminal_error = Some(record_request_failure(

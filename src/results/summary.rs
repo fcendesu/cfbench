@@ -1,6 +1,6 @@
 use serde::Serialize;
 
-use super::{RawResults, reduce};
+use super::{MetadataStatus, NetworkMetadata, RawResults, reduce};
 
 pub const SCHEMA_VERSION: u32 = 1;
 
@@ -47,6 +47,8 @@ pub struct TargetInfo {
     pub ip_family: Option<String>,
     pub http_version: Option<String>,
     pub timing_model: String,
+    pub metadata_status: MetadataStatus,
+    pub metadata: Option<NetworkMetadata>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
@@ -60,6 +62,7 @@ pub struct Usage {
 #[derive(Clone, Debug, Serialize)]
 pub struct RunResult {
     pub schema_version: u32,
+    pub started_at: String,
     pub client: ClientInfo,
     pub target: TargetInfo,
     pub summary: Summary,
@@ -76,6 +79,8 @@ impl RunResult {
         let raw = RawResults::default();
         Self {
             schema_version: SCHEMA_VERSION,
+            // Runner assigns this from its one RunClock before executing the plan.
+            started_at: String::new(),
             client: ClientInfo {
                 name: "cfbench".to_owned(),
                 version: env!("CARGO_PKG_VERSION").to_owned(),
@@ -85,6 +90,8 @@ impl RunResult {
                 ip_family: None,
                 http_version: None,
                 timing_model: "native_reqwest_v1".to_owned(),
+                metadata_status: MetadataStatus::Unavailable,
+                metadata: None,
             },
             summary: reduce(&raw),
             usage: Usage::default(),

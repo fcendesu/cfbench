@@ -253,6 +253,35 @@ async fn loaded_probe_metadata_participates_in_run_aggregation() {
 }
 
 #[tokio::test(start_paused = true)]
+async fn accepted_loaded_and_transfer_points_receive_run_clock_timestamps() {
+    let transport = TimedTransport::new([(Duration::from_millis(300), 300.0)]);
+    let task = tokio::spawn(async move {
+        Runner::new(transport, download_plan(1))
+            .run(&CancellationToken::new())
+            .await
+    });
+    tokio::time::advance(Duration::from_millis(300)).await;
+    let outcome = task.await.unwrap();
+
+    assert!(outcome.error.is_none());
+    assert!(
+        outcome.result.raw.download[0].measured_at_unix_ms > 0,
+        "the accepted transfer point must use the run clock"
+    );
+    let loaded_timestamps = outcome
+        .result
+        .raw
+        .download_loaded_latency
+        .as_slice()
+        .iter()
+        .map(|point| point.measured_at_unix_ms)
+        .collect::<Vec<_>>();
+    assert!(!loaded_timestamps.is_empty());
+    assert!(loaded_timestamps.iter().all(|timestamp| *timestamp > 0));
+    assert!(loaded_timestamps.windows(2).all(|pair| pair[0] <= pair[1]));
+}
+
+#[tokio::test(start_paused = true)]
 async fn loaded_probe_conversion_diagnostic_includes_direction_endpoint_and_cause() {
     let transport = TimedTransport {
         invalid_probe: true,

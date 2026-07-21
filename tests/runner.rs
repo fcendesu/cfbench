@@ -130,6 +130,51 @@ async fn runner_aggregates_mixed_http_versions_and_ip_families() {
 }
 
 #[tokio::test]
+async fn runner_stamps_every_accepted_point_from_one_nondecreasing_run_clock() {
+    let observations = [
+        TimingObservation::from_millis(20.0, 30.0, 10.0, 0, "2"),
+        TimingObservation::from_millis(21.0, 31.0, 10.0, 0, "2"),
+        TimingObservation::from_millis(20.0, 500.0, 0.0, 100_000, "2"),
+    ];
+    let outcome = Runner::new(
+        ScriptedTransport::new(observations.into_iter().map(Ok)),
+        plan(vec![
+            MeasurementStep::Latency { packets: 2 },
+            MeasurementStep::Download {
+                bytes: 100_000,
+                count: 1,
+                bypass_finish: true,
+            },
+        ]),
+    )
+    .with_loaded_latency(false)
+    .run(&CancellationToken::new())
+    .await;
+
+    assert!(outcome.error.is_none());
+    assert!(humantime::parse_rfc3339(&outcome.result.started_at).is_ok());
+    let timestamps = outcome
+        .result
+        .raw
+        .latency
+        .iter()
+        .map(|point| point.measured_at_unix_ms)
+        .chain(
+            outcome
+                .result
+                .raw
+                .download
+                .iter()
+                .map(|point| point.measured_at_unix_ms),
+        )
+        .collect::<Vec<_>>();
+
+    assert_eq!(timestamps.len(), 3);
+    assert!(timestamps.iter().all(|timestamp| *timestamp > 0));
+    assert!(timestamps.windows(2).all(|pair| pair[0] <= pair[1]));
+}
+
+#[tokio::test]
 async fn runner_ignores_missing_metadata_and_no_observations_remain_null() {
     let mut missing = TimingObservation::from_millis(20.0, 30.0, 10.0, 0, "2");
     missing.http_version = None;
