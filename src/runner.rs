@@ -590,6 +590,9 @@ pub(crate) const fn progress_failure_kind(error: &TransportError) -> ProgressFai
         TransportError::DownloadPayloadMismatch { .. }
         | TransportError::UploadPayloadMismatch { .. } => ProgressFailureKind::PayloadMismatch,
         TransportError::Request { .. }
+        | TransportError::MetadataBodyTooLarge { .. }
+        | TransportError::MetadataJson { .. }
+        | TransportError::MetadataStructure { .. }
         | TransportError::InvalidBaseUrl(_)
         | TransportError::InvalidRequestContext
         | TransportError::ClientBuild(_) => ProgressFailureKind::Request,

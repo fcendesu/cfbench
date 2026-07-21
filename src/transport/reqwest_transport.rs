@@ -12,12 +12,15 @@ use tokio_util::sync::CancellationToken;
 use crate::config::{IpMode, RunConfig};
 use crate::error::TransportError;
 use crate::measurement::TimingObservation;
+use crate::results::NetworkMetadata;
 
+use super::metadata::metadata_from_value;
 use super::server_timing::server_duration;
 use super::upload_body::stream_upload;
 
 const CLOUDFLARE_BASE_URL: &str = "https://speed.cloudflare.com";
 const SERVER_TIMING: &str = "server-timing";
+const MAX_METADATA_BODY_BYTES: usize = 65_536;
 
 /// Reqwest-backed transport shared by every measurement in one run.
 #[derive(Clone)]
@@ -63,6 +66,49 @@ impl ReqwestTransport {
         cancellation: &CancellationToken,
     ) -> Result<TimingObservation, TransportError> {
         self.download(0, None, cancellation).await
+    }
+
+    /// Fetches bounded post-measurement network metadata without creating a timing observation.
+    pub async fn metadata(
+        &self,
+        cancellation: &CancellationToken,
+    ) -> Result<NetworkMetadata, TransportError> {
+        let url = self.endpoint("meta")?;
+        let endpoint = redacted_endpoint(&url);
+        let request = self.client.get(url).header(REFERER, self.referer.clone());
+        let deadline = tokio::time::Instant::now() + self.request_timeout;
+        let mut response = self
+            .send_headers(request, &endpoint, deadline, cancellation)
+            .await?;
+        if !response.status().is_success() {
+            return Err(TransportError::HttpStatus {
+                endpoint,
+                status: response.status().as_u16(),
+                payload_bytes: 0,
+            });
+        }
+
+        let mut body = Vec::new();
+        while let Some(chunk) = self
+            .next_chunk(&mut response, &endpoint, deadline, 0, cancellation)
+            .await?
+        {
+            if chunk.len() > MAX_METADATA_BODY_BYTES - body.len() {
+                return Err(TransportError::MetadataBodyTooLarge {
+                    endpoint,
+                    limit: MAX_METADATA_BODY_BYTES,
+                });
+            }
+            body.extend_from_slice(&chunk);
+        }
+
+        let value =
+            serde_json::from_slice(&body).map_err(|source| TransportError::MetadataJson {
+                endpoint: endpoint.clone(),
+                source,
+            })?;
+        metadata_from_value(value)
+            .map_err(|source| TransportError::MetadataStructure { endpoint, source })
     }
 
     pub async fn download(
