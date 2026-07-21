@@ -34,8 +34,9 @@ async fn run(cli: Cli, config: RunConfig) -> ExitCode {
     let (outcome, progress_error) = match ReqwestTransport::new(config.clone()) {
         Ok(transport) => {
             let plan = default_cloudflare_plan().for_config(&config);
-            let runner =
-                Runner::new(transport, plan).with_loaded_latency(!config.no_loaded_latency);
+            let runner = Runner::new(transport, plan)
+                .with_loaded_latency(!config.no_loaded_latency)
+                .with_metadata(!config.no_metadata);
             let run = run_with_signal_and_progress(
                 &runner,
                 tokio::signal::ctrl_c(),

@@ -1,18 +1,24 @@
 use std::collections::VecDeque;
 use std::error::Error;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use cfbench::cancellation::CancellationToken;
 use cfbench::error::TransportError;
 use cfbench::measurement::TimingObservation;
 use cfbench::plan::{Direction, MeasurementPlan, MeasurementStep};
 use cfbench::progress::{ProgressEvent, ProgressFailureKind, ProgressReporter, ProgressStage};
-use cfbench::runner::{MeasurementFuture, MeasurementTransport, Runner, RunnerError};
+use cfbench::results::{ClientLocation, EdgeLocation, MetadataStatus, NetworkMetadata};
+use cfbench::runner::{
+    MeasurementFuture, MeasurementTransport, MetadataFuture, Runner, RunnerError,
+};
 
 #[derive(Clone)]
 struct ScriptedTransport {
     script: Arc<Mutex<VecDeque<Result<TimingObservation, TransportError>>>>,
     calls: Arc<Mutex<Vec<&'static str>>>,
+    metadata_result: Arc<Mutex<Option<Result<NetworkMetadata, TransportError>>>>,
+    metadata_delay: Duration,
 }
 
 impl ScriptedTransport {
@@ -20,7 +26,19 @@ impl ScriptedTransport {
         Self {
             script: Arc::new(Mutex::new(script.into_iter().collect())),
             calls: Arc::new(Mutex::new(Vec::new())),
+            metadata_result: Arc::new(Mutex::new(None)),
+            metadata_delay: Duration::ZERO,
         }
+    }
+
+    fn with_metadata_result(
+        mut self,
+        result: Result<NetworkMetadata, TransportError>,
+        delay: Duration,
+    ) -> Self {
+        self.metadata_result = Arc::new(Mutex::new(Some(result)));
+        self.metadata_delay = delay;
+        self
     }
 
     fn transfer_durations(durations_ms: impl IntoIterator<Item = f64>) -> Self {
@@ -46,6 +64,26 @@ impl ScriptedTransport {
 }
 
 impl MeasurementTransport for ScriptedTransport {
+    fn metadata<'a>(&'a self, cancellation: &'a CancellationToken) -> MetadataFuture<'a> {
+        Box::pin(async move {
+            self.calls.lock().unwrap().push("metadata");
+            if !self.metadata_delay.is_zero() {
+                tokio::select! {
+                    biased;
+                    () = cancellation.cancelled() => {
+                        return Err(TransportError::Cancelled { payload_bytes: 0 });
+                    }
+                    () = tokio::time::sleep(self.metadata_delay) => {}
+                }
+            }
+            self.metadata_result
+                .lock()
+                .unwrap()
+                .take()
+                .expect("metadata script contains one result")
+        })
+    }
+
     fn latency<'a>(&'a self, _: &'a CancellationToken) -> MeasurementFuture<'a> {
         Box::pin(async move { self.next("latency") })
     }
@@ -91,6 +129,253 @@ fn downloads(groups: &[(u64, u32, bool)]) -> MeasurementPlan {
             })
             .collect(),
     )
+}
+
+fn metadata_fixture() -> NetworkMetadata {
+    NetworkMetadata {
+        public_ip: Some("2a02:ff0::1".to_owned()),
+        asn: Some(12_735),
+        as_organization: Some("TurkNet".to_owned()),
+        client_location: ClientLocation {
+            country_code: Some("TR".to_owned()),
+            city: Some("Istanbul".to_owned()),
+            ..ClientLocation::default()
+        },
+        edge: EdgeLocation {
+            colo: Some("IST".to_owned()),
+            country_code: Some("TR".to_owned()),
+            city: Some("Arnavutkoy".to_owned()),
+            ..EdgeLocation::default()
+        },
+    }
+}
+
+#[tokio::test]
+async fn runner_defaults_to_disabled_metadata_for_backward_compatible_test_transports() {
+    let transport =
+        ScriptedTransport::new([Ok(TimingObservation::from_millis(20.0, 30.0, 10.0, 0, "2"))]);
+    let calls = transport.calls.clone();
+    let outcome = Runner::new(
+        transport,
+        plan(vec![MeasurementStep::Latency { packets: 1 }]),
+    )
+    .with_loaded_latency(false)
+    .run(&CancellationToken::new())
+    .await;
+
+    assert!(outcome.error.is_none());
+    assert_eq!(
+        outcome.result.target.metadata_status,
+        MetadataStatus::Disabled
+    );
+    assert!(outcome.result.target.metadata.is_none());
+    assert_eq!(*calls.lock().unwrap(), ["latency"]);
+}
+
+#[tokio::test(start_paused = true)]
+async fn metadata_runs_once_after_the_exact_plan_without_affecting_usage_or_summary() {
+    let metadata_delay = Duration::from_secs(5);
+    let transport = ScriptedTransport::new([
+        Ok(TimingObservation::from_millis(20.0, 30.0, 10.0, 0, "2")),
+        Ok(TimingObservation::from_millis(
+            20.0, 500.0, 0.0, 100_000, "2",
+        )),
+        Ok(TimingObservation::from_millis(
+            20.0, 500.0, 0.0, 100_000, "2",
+        )),
+    ])
+    .with_metadata_result(Ok(metadata_fixture()), metadata_delay);
+    let calls = transport.calls.clone();
+    let outcome = Runner::new(
+        transport,
+        plan(vec![
+            MeasurementStep::Latency { packets: 1 },
+            MeasurementStep::Download {
+                bytes: 100_000,
+                count: 1,
+                bypass_finish: true,
+            },
+            MeasurementStep::Upload {
+                bytes: 100_000,
+                count: 1,
+                bypass_finish: true,
+            },
+        ]),
+    )
+    .with_loaded_latency(false)
+    .with_metadata(true)
+    .run(&CancellationToken::new())
+    .await;
+
+    assert!(outcome.error.is_none());
+    assert_eq!(
+        *calls.lock().unwrap(),
+        ["latency", "download", "upload", "metadata"]
+    );
+    assert_eq!(
+        outcome.result.target.metadata_status,
+        MetadataStatus::Available
+    );
+    assert_eq!(outcome.result.target.metadata, Some(metadata_fixture()));
+    assert_eq!(outcome.result.raw.initial_latency.len(), 1);
+    assert_eq!(outcome.result.raw.download.len(), 1);
+    assert_eq!(outcome.result.raw.upload.len(), 1);
+    assert!(outcome.result.summary.download_bps.is_some());
+    assert!(outcome.result.summary.upload_bps.is_some());
+    assert_eq!(outcome.result.usage.download_payload_bytes, 100_000);
+    assert_eq!(outcome.result.usage.upload_payload_bytes, 100_000);
+    assert!(outcome.result.usage.duration_ms < metadata_delay.as_secs_f64() * 1_000.0);
+}
+
+#[tokio::test]
+async fn metadata_failure_is_one_redacted_nonfatal_diagnostic() {
+    let transport =
+        ScriptedTransport::new([Ok(TimingObservation::from_millis(20.0, 30.0, 10.0, 0, "2"))])
+            .with_metadata_result(
+                Err(TransportError::HttpStatus {
+                    endpoint: "https://user:secret@fixture.invalid/meta?token=private#fragment"
+                        .to_owned(),
+                    status: 503,
+                    payload_bytes: 0,
+                }),
+                Duration::ZERO,
+            );
+    let calls = transport.calls.clone();
+    let outcome = Runner::new(
+        transport,
+        plan(vec![MeasurementStep::Latency { packets: 1 }]),
+    )
+    .with_loaded_latency(false)
+    .with_metadata(true)
+    .run(&CancellationToken::new())
+    .await;
+
+    assert!(outcome.error.is_none());
+    assert!(outcome.result.failures.is_empty());
+    assert_eq!(
+        outcome.result.target.metadata_status,
+        MetadataStatus::Unavailable
+    );
+    assert!(outcome.result.target.metadata.is_none());
+    assert_eq!(*calls.lock().unwrap(), ["latency", "metadata"]);
+    assert_eq!(outcome.result.diagnostics.len(), 1);
+    let diagnostic = &outcome.result.diagnostics[0];
+    assert!(diagnostic.contains("metadata"));
+    assert!(diagnostic.contains("https://fixture.invalid/meta"));
+    assert!(diagnostic.contains("HTTP status 503"));
+    assert!(!diagnostic.contains("secret"));
+    assert!(!diagnostic.contains("private"));
+    assert!(!diagnostic.contains("fragment"));
+}
+
+#[tokio::test]
+async fn metadata_failure_does_not_replace_an_existing_terminal_measurement_error() {
+    let transport = ScriptedTransport::new([Err(TransportError::BodyTimeout {
+        endpoint: "https://fixture.invalid/__down".to_owned(),
+        payload_bytes: 25_000,
+    })])
+    .with_metadata_result(
+        Err(TransportError::HeaderTimeout {
+            endpoint: "https://fixture.invalid/meta".to_owned(),
+            payload_bytes: 0,
+        }),
+        Duration::ZERO,
+    );
+    let calls = transport.calls.clone();
+    let outcome = Runner::new(
+        transport,
+        plan(vec![MeasurementStep::Download {
+            bytes: 100_000,
+            count: 1,
+            bypass_finish: true,
+        }]),
+    )
+    .with_loaded_latency(false)
+    .with_metadata(true)
+    .run(&CancellationToken::new())
+    .await;
+
+    assert!(matches!(
+        outcome.error,
+        Some(RunnerError::Transport { ref stage, .. }) if stage == "download"
+    ));
+    assert_eq!(outcome.result.failures.len(), 1);
+    assert!(outcome.result.failures[0].contains("during download"));
+    assert_eq!(outcome.result.diagnostics.len(), 1);
+    assert!(outcome.result.diagnostics[0].contains("metadata"));
+    assert_eq!(outcome.result.usage.download_payload_bytes, 25_000);
+    assert_eq!(*calls.lock().unwrap(), ["download", "metadata"]);
+}
+
+#[tokio::test]
+async fn cancellation_before_plan_execution_skips_metadata_io() {
+    let transport =
+        ScriptedTransport::new([]).with_metadata_result(Ok(metadata_fixture()), Duration::ZERO);
+    let calls = transport.calls.clone();
+    let cancellation = CancellationToken::new();
+    cancellation.cancel();
+
+    let outcome = Runner::new(
+        transport,
+        plan(vec![MeasurementStep::Latency { packets: 1 }]),
+    )
+    .with_loaded_latency(false)
+    .with_metadata(true)
+    .run(&cancellation)
+    .await;
+
+    assert!(matches!(outcome.error, Some(RunnerError::Cancelled { .. })));
+    assert_eq!(
+        outcome.result.target.metadata_status,
+        MetadataStatus::Unavailable
+    );
+    assert!(outcome.result.target.metadata.is_none());
+    assert!(calls.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn cancellation_during_metadata_is_awaited_and_returns_a_cancelled_outcome() {
+    let transport = ScriptedTransport::new([])
+        .with_metadata_result(Ok(metadata_fixture()), Duration::from_secs(60));
+    let calls = transport.calls.clone();
+    let cancellation = CancellationToken::new();
+    let run_cancellation = cancellation.clone();
+    let task = tokio::spawn(async move {
+        Runner::new(transport, plan(Vec::new()))
+            .with_loaded_latency(false)
+            .with_metadata(true)
+            .run(&run_cancellation)
+            .await
+    });
+
+    tokio::time::timeout(Duration::from_secs(1), async {
+        loop {
+            if calls.lock().unwrap().as_slice() == ["metadata"] {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("metadata request starts");
+    cancellation.cancel();
+    let outcome = tokio::time::timeout(Duration::from_secs(1), task)
+        .await
+        .expect("runner awaits metadata cancellation")
+        .expect("runner task joins");
+
+    assert!(matches!(
+        outcome.error,
+        Some(RunnerError::Cancelled { ref stage }) if stage == "metadata"
+    ));
+    assert_eq!(outcome.result.failures.len(), 1);
+    assert_eq!(
+        outcome.result.target.metadata_status,
+        MetadataStatus::Unavailable
+    );
+    assert!(outcome.result.target.metadata.is_none());
+    assert!(outcome.result.diagnostics.is_empty());
+    assert_eq!(*calls.lock().unwrap(), ["metadata"]);
 }
 
 #[tokio::test]

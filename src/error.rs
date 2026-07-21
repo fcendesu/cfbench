@@ -86,6 +86,8 @@ pub enum TransportError {
         #[source]
         source: MetadataStructureError,
     },
+    #[error("metadata collection is not supported by this transport")]
+    MetadataUnsupported,
     #[error("invalid transport base URL: {0}")]
     InvalidBaseUrl(String),
     #[error("could not construct a safe request context from the transport base URL")]
@@ -108,6 +110,7 @@ impl TransportError {
             Self::MetadataBodyTooLarge { .. }
             | Self::MetadataJson { .. }
             | Self::MetadataStructure { .. }
+            | Self::MetadataUnsupported
             | Self::InvalidBaseUrl(_)
             | Self::InvalidRequestContext
             | Self::ClientBuild(_) => 0,

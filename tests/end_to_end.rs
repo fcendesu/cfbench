@@ -5,6 +5,7 @@ use cfbench::config::RunConfig;
 use cfbench::plan::{
     CLOUDFLARE_SPEEDTEST_COMMIT, CLOUDFLARE_SPEEDTEST_VERSION, MeasurementPlan, MeasurementStep,
 };
+use cfbench::results::MetadataStatus;
 use cfbench::runner::Runner;
 use cfbench::transport::ReqwestTransport;
 
@@ -17,6 +18,7 @@ async fn compact_fixture_run_produces_reducible_results() {
         .expect("build fixture transport");
     let outcome = Runner::new(transport, compact_plan())
         .with_loaded_latency(false)
+        .with_metadata(true)
         .run(&CancellationToken::new())
         .await;
 
@@ -27,7 +29,36 @@ async fn compact_fixture_run_produces_reducible_results() {
     assert_eq!(outcome.result.raw.latency.len(), 2);
     assert_eq!(outcome.result.raw.download.len(), 1);
     assert_eq!(outcome.result.raw.upload.len(), 1);
+    assert_eq!(
+        outcome.result.target.metadata_status,
+        MetadataStatus::Available
+    );
+    let metadata = outcome
+        .result
+        .target
+        .metadata
+        .as_ref()
+        .expect("fixture metadata is retained");
+    assert_eq!(metadata.public_ip.as_deref(), Some("192.0.2.1"));
+    assert_eq!(metadata.edge.colo.as_deref(), Some("TEST"));
+    assert_eq!(outcome.result.usage.download_payload_bytes, 1_024);
+    assert_eq!(outcome.result.usage.upload_payload_bytes, 1_024);
     assert_eq!(server.unexpected_requests(), 0);
+    assert_eq!(server.request_count(), 5);
+    let requests = server.requests().await;
+    assert_eq!(
+        requests
+            .iter()
+            .map(|request| request.path.as_str())
+            .collect::<Vec<_>>(),
+        [
+            "/__down?bytes=0",
+            "/__down?bytes=0",
+            "/__down?bytes=1024",
+            "/__up",
+            "/meta",
+        ]
+    );
     let uploads = server.uploads().await;
     assert_eq!(uploads.len(), 1);
     assert_eq!(uploads[0].body_bytes, 1_024);

@@ -403,6 +403,21 @@ async fn serve_cloudflare_compatible(
         return Ok(());
     }
 
+    if method == "GET" && target == "/meta" {
+        let body = br#"{"clientIp":"192.0.2.1","asn":64500,"asOrganization":"Fixture Network","country":"ZZ","city":"Test City","colo":{"iata":"TEST","cca2":"ZZ","city":"Test Edge"}}"#;
+        socket
+            .write_all(
+                format!(
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    body.len()
+                )
+                .as_bytes(),
+            )
+            .await?;
+        socket.write_all(body).await?;
+        return Ok(());
+    }
+
     unexpected_requests.fetch_add(1, Ordering::Relaxed);
     write_empty_response(socket, 404).await
 }

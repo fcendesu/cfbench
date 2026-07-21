@@ -14,7 +14,7 @@ use crate::measurement::{
 };
 use crate::plan::{Direction, MeasurementPlan, MeasurementStep};
 use crate::progress::{ProgressEvent, ProgressFailureKind, ProgressReporter, ProgressStage};
-use crate::results::{RunResult, reduce};
+use crate::results::{MetadataStatus, NetworkMetadata, RunResult, reduce};
 use crate::transport::ReqwestTransport;
 
 const MIN_FINISH_DURATION_MS: f64 = 1_000.0;
@@ -24,8 +24,16 @@ const MIN_LOADED_GROUP_DURATION_MS: f64 = 250.0;
 pub type MeasurementFuture<'a> =
     Pin<Box<dyn Future<Output = Result<TimingObservation, TransportError>> + Send + 'a>>;
 
+/// A boxed post-plan metadata operation used without exposing HTTP client types.
+pub type MetadataFuture<'a> =
+    Pin<Box<dyn Future<Output = Result<NetworkMetadata, TransportError>> + Send + 'a>>;
+
 /// The transport surface required by ordered measurement orchestration.
 pub trait MeasurementTransport: Send + Sync + 'static {
+    fn metadata<'a>(&'a self, _: &'a CancellationToken) -> MetadataFuture<'a> {
+        Box::pin(async { Err(TransportError::MetadataUnsupported) })
+    }
+
     fn latency<'a>(&'a self, cancellation: &'a CancellationToken) -> MeasurementFuture<'a>;
 
     fn loaded_latency<'a>(
@@ -49,6 +57,10 @@ pub trait MeasurementTransport: Send + Sync + 'static {
 }
 
 impl MeasurementTransport for ReqwestTransport {
+    fn metadata<'a>(&'a self, cancellation: &'a CancellationToken) -> MetadataFuture<'a> {
+        Box::pin(ReqwestTransport::metadata(self, cancellation))
+    }
+
     fn latency<'a>(&'a self, cancellation: &'a CancellationToken) -> MeasurementFuture<'a> {
         Box::pin(ReqwestTransport::latency(self, cancellation))
     }
@@ -121,6 +133,7 @@ pub struct Runner<T> {
     transport: Arc<T>,
     plan: MeasurementPlan,
     loaded_latency: bool,
+    metadata: bool,
 }
 
 struct TransferProgress {
@@ -138,11 +151,17 @@ where
             transport: Arc::new(transport),
             plan,
             loaded_latency: true,
+            metadata: false,
         }
     }
 
     pub fn with_loaded_latency(mut self, enabled: bool) -> Self {
         self.loaded_latency = enabled;
+        self
+    }
+
+    pub fn with_metadata(mut self, enabled: bool) -> Self {
+        self.metadata = enabled;
         self
     }
 
@@ -159,11 +178,34 @@ where
         let mut result = RunResult::empty();
         let clock = RunClock::start();
         result.started_at = clock.started_at().to_owned();
-        let error = self
+        let mut error = self
             .execute(&mut result, cancellation, &progress, &clock)
             .await;
         result.usage.duration_ms = clock.elapsed().as_secs_f64() * 1_000.0;
         result.summary = reduce(&result.raw);
+        if !self.metadata {
+            result.target.metadata_status = MetadataStatus::Disabled;
+        } else if !cancellation.is_cancelled() {
+            match self.transport.metadata(cancellation).await {
+                Ok(metadata) => {
+                    result.target.metadata_status = MetadataStatus::Available;
+                    result.target.metadata = Some(metadata);
+                }
+                Err(cancelled @ TransportError::Cancelled { .. }) => {
+                    if error.is_none() {
+                        error = Some(record_failure(
+                            &mut result,
+                            RunnerError::Cancelled {
+                                stage: "metadata".to_owned(),
+                            },
+                        ));
+                    } else {
+                        result.diagnostics.push(metadata_diagnostic(&cancelled));
+                    }
+                }
+                Err(error) => result.diagnostics.push(metadata_diagnostic(&error)),
+            }
+        }
 
         RunOutcome { result, error }
     }
@@ -593,6 +635,7 @@ pub(crate) const fn progress_failure_kind(error: &TransportError) -> ProgressFai
         | TransportError::MetadataBodyTooLarge { .. }
         | TransportError::MetadataJson { .. }
         | TransportError::MetadataStructure { .. }
+        | TransportError::MetadataUnsupported
         | TransportError::InvalidBaseUrl(_)
         | TransportError::InvalidRequestContext
         | TransportError::ClientBuild(_) => ProgressFailureKind::Request,
@@ -617,6 +660,77 @@ fn merge_metadata(current: &mut Option<String>, observed: Option<&str>) {
         Some(existing) if existing == observed => {}
         Some(_) => *current = Some("mixed".to_owned()),
     }
+}
+
+fn metadata_diagnostic(error: &TransportError) -> String {
+    match error {
+        TransportError::HeaderTimeout { endpoint, .. } => {
+            metadata_endpoint_diagnostic(endpoint, "timed out waiting for response headers")
+        }
+        TransportError::BodyTimeout { endpoint, .. } => {
+            metadata_endpoint_diagnostic(endpoint, "timed out while reading the response body")
+        }
+        TransportError::Request { endpoint, .. } => {
+            metadata_endpoint_diagnostic(endpoint, "HTTP request failed")
+        }
+        TransportError::HttpStatus {
+            endpoint, status, ..
+        } => metadata_endpoint_diagnostic(endpoint, &format!("HTTP status {status}")),
+        TransportError::BodyStream { endpoint, .. } => {
+            metadata_endpoint_diagnostic(endpoint, "response body stream failed")
+        }
+        TransportError::MetadataBodyTooLarge { endpoint, limit } => {
+            metadata_endpoint_diagnostic(endpoint, &format!("response body exceeds {limit} bytes"))
+        }
+        TransportError::MetadataJson { endpoint, .. } => {
+            metadata_endpoint_diagnostic(endpoint, "response body is not valid JSON")
+        }
+        TransportError::MetadataStructure { endpoint, .. } => {
+            metadata_endpoint_diagnostic(endpoint, "response JSON has an invalid structure")
+        }
+        TransportError::Cancelled { .. } => "metadata collection was cancelled".to_owned(),
+        TransportError::MetadataUnsupported => {
+            "metadata collection is unavailable for this transport".to_owned()
+        }
+        TransportError::InvalidBaseUrl(_)
+        | TransportError::InvalidRequestContext
+        | TransportError::ClientBuild(_) => {
+            "metadata collection failed before a safe request could be built".to_owned()
+        }
+        TransportError::DownloadPayloadMismatch { .. }
+        | TransportError::UploadPayloadMismatch { .. } => {
+            "metadata collection failed with an unexpected payload error".to_owned()
+        }
+    }
+}
+
+fn metadata_endpoint_diagnostic(endpoint: &str, detail: &str) -> String {
+    format!(
+        "metadata collection failed for endpoint {}: {detail}",
+        redact_endpoint(endpoint)
+    )
+}
+
+fn redact_endpoint(endpoint: &str) -> String {
+    let without_fragment = endpoint.split('#').next().unwrap_or(endpoint);
+    let without_query = without_fragment
+        .split('?')
+        .next()
+        .unwrap_or(without_fragment);
+    let Some((scheme, remainder)) = without_query.split_once("://") else {
+        return "metadata endpoint".to_owned();
+    };
+    if !matches!(scheme, "http" | "https") {
+        return "metadata endpoint".to_owned();
+    }
+    let (authority, path) = remainder
+        .split_once('/')
+        .map_or((remainder, "/"), |(authority, path)| (authority, path));
+    let authority = authority.rsplit('@').next().unwrap_or_default();
+    if authority.is_empty() {
+        return "metadata endpoint".to_owned();
+    }
+    format!("{scheme}://{authority}/{}", path.trim_start_matches('/'))
 }
 
 const fn direction_name(direction: Direction) -> &'static str {
