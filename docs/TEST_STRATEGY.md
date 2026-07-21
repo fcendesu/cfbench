@@ -11,6 +11,8 @@ The test suite must prove that `cfbench`:
 - streams large transfers without unbounded memory growth;
 - handles timing and concurrency deterministically where possible;
 - emits stable text and JSON contracts;
+- enriches results only after measurement, while preserving explicit metadata
+  privacy, nullability, timestamp, and failure semantics;
 - reports request progress without blocking measurements or contaminating
   stdout;
 - fails safely under realistic network errors;
@@ -35,7 +37,9 @@ Pure functions and isolated state machines:
 - same-direction finish/skip state;
 - loaded-point retention at 20;
 - JSON serialization;
-- byte and unit formatting.
+- byte and unit formatting;
+- metadata leaf conversion and compact punctuation-safe text formatting;
+- schema-v1 metadata statuses/nulls and per-point timestamp serialization.
 
 ### 2.2 Component tests
 
@@ -47,9 +51,11 @@ Async units with controlled clocks or local channels:
 - 400 ms throttling using paused Tokio time;
 - 250 ms loaded-transfer eligibility;
 - request timeout mapping;
-- partial-result accumulation.
+- partial-result accumulation;
 - bounded progress backpressure and closed-receiver behavior;
-- progress-renderer write failure cancellation and task joining.
+- progress-renderer write failure cancellation and task joining;
+- post-plan metadata ordering, opt-out, nonfatal failure, and cancellation;
+- monotonic-anchor point timestamps that remain nondecreasing.
 
 ### 2.3 Local HTTP integration tests
 
@@ -67,7 +73,9 @@ The server must support:
 - early connection close;
 - response-body size mismatch;
 - hanging requests for timeout tests;
-- HTTP/1.1 and, where practical, HTTP/2.
+- HTTP/1.1 and, where practical, HTTP/2;
+- chunked `/meta` responses, unknown/malformed optional leaves, malformed JSON,
+  non-object JSON, a 65,536-byte boundary, and a 65,537-byte rejection.
 
 The release suite also includes a compact end-to-end plan that crosses the
 actual `Runner` and `ReqwestTransport` boundary against this fixture. It must
@@ -90,7 +98,10 @@ App-boundary tests assert:
   remain visible;
 - exit codes;
 - partial result behavior;
-- no ANSI cursor-control sequences.
+- no ANSI cursor-control sequences;
+- complete, partial, unavailable, and disabled metadata text blocks;
+- one schema-v1 JSON document with additive run, target-metadata, and raw-point
+  timestamp fields.
 
 The compiled-binary tests use `assert_cmd`; app-boundary tests use in-memory
 writers and scripted transports.
@@ -106,22 +117,35 @@ They verify only broad invariants:
 - upload succeeds;
 - non-negative timings;
 - at least one valid latency point;
-- summary values are finite and positive when the direction is enabled.
+- summary values are finite and positive when the direction is enabled;
 - the 100 MB download accepts production's normalized same-origin request
-  context at the response-header boundary without reading the response body.
+  context at the response-header boundary without reading the response body;
+- `/meta` returns a nonempty public-IP field, a positive `u32` ASN, and a
+  three-letter uppercase colo, without revealing returned values in test
+  messages, fixtures, or successful output.
 
 They must never be required for ordinary CI because they consume data and depend on external networking.
 
 The MVP live set includes a zero-byte latency probe, an exact-size 65,536-byte
-download, and a 65,536-byte upload. A separate regression guard sends the 100 MB
-GET but drops the response immediately after headers, so it does not consume
-the advertised body. Run the live set explicitly:
+download, a 65,536-byte upload, and the broad-shape metadata guard. A separate
+regression guard sends the 100 MB GET but drops the response immediately after
+headers, so it does not consume the advertised body. Run the live set
+explicitly:
 
 ```text
 cargo test --test live_cloudflare -- --ignored
 ```
 
 No live test uses the default plan or requests the 250 MB download group.
+
+Run only the metadata broad-shape guard with:
+
+```text
+cargo test --test live_cloudflare live_cloudflare_metadata_has_broad_public_shape -- --ignored --exact
+```
+
+This test intentionally asserts predicates rather than interpolating the
+returned public IP, ASN, organization, or location into failure messages.
 
 Run only the request-context regression with:
 
@@ -200,6 +224,29 @@ filtering of both transfer directions while retaining packet-loss metadata.
    stored results.
 5. Ordinary text writes progress only to stderr; `--quiet` and `--json` suppress
    it completely while final output and diagnostics retain their contracts.
+
+### Result metadata and timestamps
+
+1. Metadata-enabled runs make exactly one `/meta` request after the final plan
+   operation and after loaded probes are joined.
+2. Metadata body bytes and elapsed time do not enter direction usage or
+   `usage.duration_ms`.
+3. `--no-metadata` performs zero metadata I/O, emits no metadata text lines,
+   and serializes `disabled` plus null metadata.
+4. HTTP, timeout, body-limit, JSON, and top-level shape failures are nonfatal,
+   serialize `unavailable` plus null metadata, and add one redacted diagnostic.
+5. Available metadata retains a stable nullable shape and ignores unknown
+   upstream fields; invalid coordinates become null per leaf.
+6. Complete and partial text metadata never leaves dangling em dashes, commas,
+   or parentheses; an unavailable result is explicit and disabled output is
+   omitted.
+7. Every accepted latency/bandwidth point has a nondecreasing Unix-millisecond
+   completion timestamp, while reductions are unchanged when timestamps vary.
+8. Raw points remain in unloaded-latency, download, upload, and separate
+   direction-loaded arrays. `requested_bytes` is the group key, and the initial
+   estimate is not serialized.
+9. Packet loss remains unavailable/null and AIM scores remain absent; metadata
+   coverage does not substitute either excluded feature.
 
 ### Error handling
 
@@ -343,10 +390,12 @@ Current evidence status:
 - executed Ubuntu/macOS/Windows CI matrix: outstanding until the workflow runs;
 - peak-memory measurement for the ignored 250 MB fixture: outstanding;
 - paired browser/native observations: outstanding;
-- live default-plan and loaded-latency evidence: outstanding.
+- live default-plan and loaded-latency evidence: outstanding;
 - ignored 100 MB header-only request-context coverage: available, with manual
   live execution required because external service behavior is not a local
-  quality gate.
+  quality gate;
+- ignored `/meta` broad-shape coverage: available, with explicit manual live
+  execution required and no personal/network values retained as evidence.
 
 The repository must not be described as `0.1.0` release-ready until the
 outstanding release evidence is collected and reviewed.

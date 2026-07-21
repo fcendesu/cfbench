@@ -15,6 +15,7 @@ use cfbench::error::TransportError;
 use cfbench::measurement::TimingObservation;
 use cfbench::plan::{MeasurementPlan, MeasurementStep};
 use cfbench::progress::{ProgressEvent, ProgressReporter};
+use cfbench::results::{EdgeLocation, MetadataStatus, NetworkMetadata, RunResult};
 use cfbench::runner::{MeasurementFuture, MeasurementTransport, RunOutcome, Runner, RunnerError};
 
 #[tokio::test]
@@ -202,6 +203,45 @@ fn json_mode_writes_one_partial_document_without_progress_then_returns_one() {
     let stderr = String::from_utf8(stderr).unwrap();
     assert!(!stderr.contains("Testing against"));
     assert!(stderr.contains("error: measurement cancelled"));
+}
+
+#[test]
+fn json_mode_keeps_additive_metadata_in_one_schema_v1_document() {
+    let mut result = RunResult::empty();
+    result.started_at = "2026-07-19T09:02:59.123Z".to_owned();
+    result.target.metadata_status = MetadataStatus::Available;
+    result.target.metadata = Some(NetworkMetadata {
+        public_ip: Some("2001:db8::1".to_owned()),
+        asn: Some(64_496),
+        edge: EdgeLocation {
+            colo: Some("XYZ".to_owned()),
+            ..EdgeLocation::default()
+        },
+        ..NetworkMetadata::default()
+    });
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+
+    let exit = write_outcome(
+        RunOutcome {
+            result,
+            error: None,
+        },
+        OutputOptions {
+            json: true,
+            quiet: false,
+        },
+        &mut stdout,
+        &mut stderr,
+    )
+    .unwrap();
+    let parsed: serde_json::Value = serde_json::from_slice(&stdout).unwrap();
+
+    assert_eq!(exit, 0);
+    assert_eq!(parsed["schema_version"], 1);
+    assert_eq!(parsed["target"]["metadata_status"], "available");
+    assert_eq!(parsed["target"]["metadata"]["public_ip"], "2001:db8::1");
+    assert!(stderr.is_empty());
 }
 
 #[test]
