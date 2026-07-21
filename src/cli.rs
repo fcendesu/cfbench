@@ -31,6 +31,10 @@ pub struct Cli {
     #[arg(long)]
     pub no_loaded_latency: bool,
 
+    /// Do not request or display public IP and network metadata
+    #[arg(long)]
+    pub no_metadata: bool,
+
     /// Per-request timeout
     #[arg(
         long,

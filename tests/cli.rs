@@ -1,4 +1,7 @@
 use assert_cmd::Command;
+use cfbench::cli::Cli;
+use cfbench::config::RunConfig;
+use clap::Parser;
 use predicates::prelude::*;
 
 #[test]
@@ -55,6 +58,7 @@ fn help_exposes_only_the_prd_flags() {
         "--no-download",
         "--no-upload",
         "--no-loaded-latency",
+        "--no-metadata",
         "--timeout",
         "--quiet",
         "--help",
@@ -64,6 +68,16 @@ fn help_exposes_only_the_prd_flags() {
     }
     assert!(!stdout.contains("--base-url"));
     assert!(!stdout.contains("--provider"));
+    assert!(stdout.contains("Do not request or display public IP and network metadata"));
+}
+
+#[test]
+fn no_metadata_is_public_and_defaults_to_collection() {
+    let default = Cli::try_parse_from(["cfbench"]).unwrap();
+    assert!(!RunConfig::try_from(default).unwrap().no_metadata);
+
+    let disabled = Cli::try_parse_from(["cfbench", "--no-metadata"]).unwrap();
+    assert!(RunConfig::try_from(disabled).unwrap().no_metadata);
 }
 
 #[test]
