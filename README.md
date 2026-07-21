@@ -52,7 +52,7 @@ Options:
       --no-download          Skip download measurements
       --no-upload            Skip upload measurements
       --no-loaded-latency    Disable latency probes during transfers
-      --no-metadata          Do not request or display public IP and network metadata
+      --no-metadata          Skip the default public IP and network metadata request
       --timeout <SECONDS>    Per-request timeout [default: 30]
   -q, --quiet                Suppress progress lines
   -h, --help                 Print help
@@ -68,11 +68,11 @@ including response-body streaming. Progress and diagnostics go to stderr;
 `--quiet` also suppresses every progress line, but not the final result,
 diagnostics, or fatal errors.
 
-By default, one post-test request to Cloudflare's `/meta` endpoint collects the
-public IP, ASN, network organization, and approximate client and edge location
-already visible to Cloudflare. Use `--no-metadata` to skip that request and omit
-those lines from text output; JSON then reports `metadata_status: "disabled"`
-and `metadata: null`.
+Metadata collection is enabled by default. One post-test request to Cloudflare's
+`/meta` endpoint collects the public IP, ASN, network organization, and
+approximate location already visible to Cloudflare. `--no-metadata` skips the
+request entirely and omits those lines from text output; JSON then reports
+`metadata_status: "disabled"` and `metadata: null`.
 
 ## Progress output
 
@@ -251,6 +251,11 @@ one `/meta` request follows the completed timed plan. It does not warm the
 connection before testing or overlap a measurement, and its body bytes and
 elapsed time are excluded from `usage`. A metadata failure is nonfatal and is
 reported once as a diagnostic without fabricating a point.
+
+Ctrl+C during the active post-plan metadata request makes cancellation the
+terminal outcome. Completed points and any earlier measurement failure remain
+in `failures`, the metadata cancellation is appended there, and it is not
+substituted with a metadata diagnostic.
 
 Downloaded usage counts response-body bytes actually received, including bytes
 received before a failed or cancelled request. Uploaded usage counts bytes

@@ -276,11 +276,13 @@ fn record_signal_error(outcome: &mut RunOutcome, signal: std::io::Result<()>) {
 }
 
 fn ensure_cancelled_outcome(outcome: &mut RunOutcome) {
-    if outcome.error.is_none() {
-        let error = RunnerError::Cancelled {
-            stage: "run".to_owned(),
-        };
-        outcome.result.failures.push(error.to_string());
-        outcome.error = Some(error);
+    if matches!(outcome.error, Some(RunnerError::Cancelled { .. })) {
+        return;
     }
+
+    let error = RunnerError::Cancelled {
+        stage: "run".to_owned(),
+    };
+    outcome.result.failures.push(error.to_string());
+    outcome.error = Some(error);
 }

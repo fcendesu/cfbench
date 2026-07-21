@@ -379,6 +379,68 @@ async fn cancellation_during_metadata_is_awaited_and_returns_a_cancelled_outcome
 }
 
 #[tokio::test]
+async fn cancellation_during_metadata_supersedes_a_prior_measurement_error_terminally() {
+    let transport = ScriptedTransport::new([
+        Ok(TimingObservation::from_millis(20.0, 30.0, 10.0, 0, "2")),
+        Err(TransportError::BodyTimeout {
+            endpoint: "https://fixture.invalid/__down".to_owned(),
+            payload_bytes: 25_000,
+        }),
+    ])
+    .with_metadata_result(Ok(metadata_fixture()), Duration::from_secs(60));
+    let calls = transport.calls.clone();
+    let cancellation = CancellationToken::new();
+    let run_cancellation = cancellation.clone();
+    let task = tokio::spawn(async move {
+        Runner::new(
+            transport,
+            plan(vec![
+                MeasurementStep::Latency { packets: 1 },
+                MeasurementStep::Download {
+                    bytes: 100_000,
+                    count: 1,
+                    bypass_finish: true,
+                },
+            ]),
+        )
+        .with_loaded_latency(false)
+        .with_metadata(true)
+        .run(&run_cancellation)
+        .await
+    });
+
+    tokio::time::timeout(Duration::from_secs(1), async {
+        loop {
+            if calls.lock().unwrap().as_slice() == ["latency", "download", "metadata"] {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("metadata request starts after the failed measurement");
+    cancellation.cancel();
+    let outcome = tokio::time::timeout(Duration::from_secs(1), task)
+        .await
+        .expect("runner awaits metadata cancellation")
+        .expect("runner task joins");
+
+    assert!(matches!(
+        outcome.error,
+        Some(RunnerError::Cancelled { ref stage }) if stage == "metadata"
+    ));
+    assert_eq!(outcome.result.raw.initial_latency.len(), 1);
+    assert_eq!(outcome.result.usage.download_payload_bytes, 25_000);
+    assert_eq!(outcome.result.failures.len(), 2);
+    assert!(outcome.result.failures[0].contains("during download"));
+    assert_eq!(
+        outcome.result.failures[1],
+        "measurement cancelled during metadata"
+    );
+    assert!(outcome.result.diagnostics.is_empty());
+}
+
+#[tokio::test]
 async fn runner_records_negotiated_ip_family_and_contract_http_version() {
     let observation =
         TimingObservation::from_millis(20.0, 30.0, 10.0, 0, "2").with_ip_family("ipv6");

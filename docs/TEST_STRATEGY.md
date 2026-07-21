@@ -39,7 +39,8 @@ Pure functions and isolated state machines:
 - JSON serialization;
 - byte and unit formatting;
 - metadata leaf conversion and compact punctuation-safe text formatting;
-- schema-v1 metadata statuses/nulls and per-point timestamp serialization.
+- schema-v1 metadata statuses/nulls and per-point timestamp serialization;
+- normative PRD schema-example top-level keys against serialized `RunResult`.
 
 ### 2.2 Component tests
 
@@ -235,6 +236,9 @@ filtering of both transfer directions while retaining packet-loss metadata.
    and serializes `disabled` plus null metadata.
 4. HTTP, timeout, body-limit, JSON, and top-level shape failures are nonfatal,
    serialize `unavailable` plus null metadata, and add one redacted diagnostic.
+   Active metadata cancellation is terminal even after a measurement error;
+   the earlier failure and points remain, cancellation is appended to
+   `failures`, and no cancellation diagnostic is substituted.
 5. Available metadata retains a stable nullable shape and ignores unknown
    upstream fields; invalid coordinates become null per leaf.
 6. Complete and partial text metadata never leaves dangling em dashes, commas,

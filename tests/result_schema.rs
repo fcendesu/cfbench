@@ -1,3 +1,5 @@
+use std::collections::BTreeSet;
+
 use cfbench::measurement::{TimingObservation, bandwidth_point};
 use cfbench::plan::Direction;
 use cfbench::results::{
@@ -157,4 +159,34 @@ fn loaded_latency_serialization_retains_only_latest_twenty_points() {
         retained,
         (2..=21).map(|value| value as f64).collect::<Vec<_>>()
     );
+}
+
+#[test]
+fn prd_schema_v1_example_has_every_serialized_top_level_field() {
+    let (_, json_contract) = include_str!("../docs/PRD.md")
+        .split_once("## 10. JSON contract")
+        .expect("PRD contains the normative JSON contract section");
+    let (_, fenced_json) = json_contract
+        .split_once("```json\n")
+        .expect("JSON contract contains a JSON example");
+    let (example, _) = fenced_json
+        .split_once("\n```")
+        .expect("JSON contract example has a closing fence");
+    let documented: serde_json::Value =
+        serde_json::from_str(example).expect("JSON contract example parses");
+    let serialized = serde_json::to_value(RunResult::empty()).unwrap();
+    let documented_keys = documented
+        .as_object()
+        .expect("documented result is an object")
+        .keys()
+        .map(String::as_str)
+        .collect::<BTreeSet<_>>();
+    let serialized_keys = serialized
+        .as_object()
+        .expect("serialized result is an object")
+        .keys()
+        .map(String::as_str)
+        .collect::<BTreeSet<_>>();
+
+    assert_eq!(documented_keys, serialized_keys);
 }

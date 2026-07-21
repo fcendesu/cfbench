@@ -202,6 +202,11 @@ zero metadata requests and serializes `metadata_status: "disabled"` with
 redacted diagnostic, preserves completed points, and does not change a
 measurement-derived success or failure status.
 
+Cancellation during an active metadata request is different from ordinary
+metadata failure: it is terminal even when enrichment follows a measurement
+error. Completed points and the earlier failure remain in result history, and
+the metadata cancellation is appended as a failure rather than a diagnostic.
+
 Text tests cover complete, partial, unavailable, and disabled metadata without
 dangling punctuation. JSON raw points remain in latency/direction/loaded
 direction arrays; `requested_bytes` is the bandwidth group key rather than a

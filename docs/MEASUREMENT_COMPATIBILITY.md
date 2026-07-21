@@ -286,7 +286,11 @@ service.
 nonfatal: it appends one redacted diagnostic, preserves measurement points and
 the measurement-derived process status, and does not fabricate latency or
 bandwidth data. Cancellation during post-plan enrichment remains cancellation;
-a run cancelled during measurements skips metadata.
+a run cancelled during measurements skips metadata. If active metadata is
+cancelled after a terminal measurement error, cancellation supersedes that
+error as the terminal outcome while the earlier failure and completed points
+remain in the serialized history. The metadata cancellation is appended to
+`failures`, not reduced to a diagnostic.
 
 Raw JSON keeps one measurement-ordered array for public unloaded latency, one
 array per bandwidth direction, and one latest-20 array per loaded-latency

@@ -68,7 +68,24 @@ fn help_exposes_only_the_prd_flags() {
     }
     assert!(!stdout.contains("--base-url"));
     assert!(!stdout.contains("--provider"));
-    assert!(stdout.contains("Do not request or display public IP and network metadata"));
+    assert!(stdout.contains("Skip the default public IP and network metadata request"));
+}
+
+#[test]
+fn help_discloses_default_metadata_collection_and_request_opt_out() {
+    Command::cargo_bin("cfbench")
+        .unwrap()
+        .arg("--help")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "Metadata collection is enabled by default",
+        ))
+        .stdout(predicate::str::contains(
+            "public IP, ASN, and approximate location",
+        ))
+        .stdout(predicate::str::contains("already visible to Cloudflare"))
+        .stdout(predicate::str::contains("--no-metadata skips the request"));
 }
 
 #[test]

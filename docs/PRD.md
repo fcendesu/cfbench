@@ -163,7 +163,7 @@ Options:
       --no-download          Skip download measurements
       --no-upload            Skip upload measurements
       --no-loaded-latency    Disable latency probes during transfers
-      --no-metadata          Do not request or display public IP and network metadata
+      --no-metadata          Skip the default public IP and network metadata request
       --timeout <SECONDS>    Per-request timeout
   -q, --quiet                Suppress progress lines
   -h, --help                 Print help
@@ -306,7 +306,14 @@ The top-level schema must be versioned from the first release:
     "upload": [],
     "download_loaded_latency": [],
     "upload_loaded_latency": []
-  }
+  },
+  "packet_loss": {
+    "status": "unavailable",
+    "reason": "turn_not_implemented",
+    "ratio": null
+  },
+  "failures": [],
+  "diagnostics": []
 }
 ```
 
@@ -345,7 +352,10 @@ initial one-packet latency estimate is not public raw output.
   nonfatal. They produce `metadata_status: "unavailable"`, `metadata: null`,
   and one redacted stderr diagnostic while preserving the measurement-derived
   exit status. Malformed optional leaves become null without discarding an
-  otherwise valid object. Cancellation during metadata remains a cancelled run.
+  otherwise valid object. Cancellation during active metadata remains the
+  terminal cancelled outcome even after an earlier measurement error; completed
+  points and the earlier error remain in result history, the cancellation is
+  appended to `failures`, and no metadata diagnostic substitutes for it.
 
 Live validation on 2026-07-19 found that a context-free 100 MB Cloudflare
 download returned HTTP 403 after earlier groups had successfully transferred

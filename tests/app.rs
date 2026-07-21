@@ -385,6 +385,33 @@ async fn selected_signal_forces_terminal_outcome_after_concurrent_final_success(
 }
 
 #[tokio::test]
+async fn selected_signal_supersedes_a_concurrent_terminal_error_and_preserves_history() {
+    let final_operation_polled = Arc::new(AtomicBool::new(false));
+    let runner = Runner::new(
+        ConcurrentErrorTransport(final_operation_polled.clone()),
+        MeasurementPlan {
+            upstream_version: "test",
+            upstream_commit: "test",
+            steps: vec![MeasurementStep::Latency { packets: 1 }],
+        },
+    )
+    .with_loaded_latency(false);
+
+    let outcome = run_with_signal(&runner, ReadyWithFinalOperation(final_operation_polled)).await;
+
+    assert!(matches!(
+        outcome.error,
+        Some(RunnerError::Cancelled { ref stage }) if stage == "run"
+    ));
+    assert_eq!(outcome.result.failures.len(), 2);
+    assert!(outcome.result.failures[0].contains("transport failed during latency"));
+    assert_eq!(
+        outcome.result.failures[1],
+        "measurement cancelled during run"
+    );
+}
+
+#[tokio::test]
 async fn transport_failure_stderr_includes_stage_redacted_endpoint_and_cause() {
     let endpoint = "https://speed.cloudflare.com/__down";
     let runner = Runner::new(
@@ -759,9 +786,65 @@ impl MeasurementTransport for ConcurrentSuccessTransport {
     }
 }
 
+struct ConcurrentErrorTransport(Arc<AtomicBool>);
+
+impl MeasurementTransport for ConcurrentErrorTransport {
+    fn latency<'a>(&'a self, _: &'a CancellationToken) -> MeasurementFuture<'a> {
+        Box::pin(PendingThenError {
+            first_poll: true,
+            final_operation_polled: self.0.clone(),
+        })
+    }
+
+    fn loaded_latency<'a>(
+        &'a self,
+        _: cfbench::plan::Direction,
+        _: &'a CancellationToken,
+    ) -> MeasurementFuture<'a> {
+        unused_measurement()
+    }
+
+    fn download<'a>(
+        &'a self,
+        _: u64,
+        _: Option<&'a str>,
+        _: &'a CancellationToken,
+    ) -> MeasurementFuture<'a> {
+        unused_measurement()
+    }
+
+    fn upload<'a>(&'a self, _: u64, _: &'a CancellationToken) -> MeasurementFuture<'a> {
+        unused_measurement()
+    }
+}
+
 struct PendingThenSuccess {
     first_poll: bool,
     final_operation_polled: Arc<AtomicBool>,
+}
+
+struct PendingThenError {
+    first_poll: bool,
+    final_operation_polled: Arc<AtomicBool>,
+}
+
+impl Future for PendingThenError {
+    type Output = Result<TimingObservation, TransportError>;
+
+    fn poll(mut self: Pin<&mut Self>, context: &mut Context<'_>) -> Poll<Self::Output> {
+        if self.first_poll {
+            self.first_poll = false;
+            self.final_operation_polled.store(true, Ordering::SeqCst);
+            context.waker().wake_by_ref();
+            Poll::Pending
+        } else {
+            Poll::Ready(Err(TransportError::HttpStatus {
+                endpoint: "https://fixture.invalid/__down".to_owned(),
+                status: 503,
+                payload_bytes: 0,
+            }))
+        }
+    }
 }
 
 impl Future for PendingThenSuccess {

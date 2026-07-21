@@ -87,7 +87,7 @@ errors and diagnostics use the existing credential/query redaction rules.
 Add one flag:
 
 ```text
---no-metadata    Do not request or display public IP and network metadata
+--no-metadata    Skip the default public IP and network metadata request
 ```
 
 Default behavior requests and displays metadata. `--no-metadata` skips the
@@ -99,8 +99,9 @@ omitted rather than printed as `unavailable` when the flag is set.
 `disabled`; renderers must not infer policy from diagnostics or from a null
 metadata object.
 
-The README and `--help` must disclose that the default metadata request exposes
-the public IP, ASN, and approximate location already visible to Cloudflare.
+The README and `--help` must disclose that metadata collection is enabled by
+default, includes the public IP, ASN, and approximate location already visible
+to Cloudflare, and that `--no-metadata` skips the request entirely.
 
 Metadata retrieval failure is nonfatal. The speed-test result and process exit
 status remain governed by the measurement run. On metadata failure:
@@ -246,6 +247,9 @@ or `output`. The measurement/statistics APIs remain independent of reqwest.
 - Ctrl+C during measurements cancels the run and skips metadata enrichment.
 - Ctrl+C during the post-plan metadata request cancels that request and returns
   the already-completed measurement outcome as cancelled, preserving points.
+  If enrichment follows an earlier measurement error, cancellation becomes the
+  terminal error while the earlier failure remains in result history; append
+  the metadata cancellation to `failures` rather than recording a diagnostic.
 - No metadata request is retried.
 - A malformed optional field does not discard otherwise valid metadata; that
   leaf becomes `null` and a diagnostic may be recorded.
@@ -277,6 +281,8 @@ Required deterministic coverage:
 12. JSON mode still writes exactly one parseable document to stdout.
 13. The existing upstream measurement-plan fixture and request-count tests
     distinguish the post-plan metadata request from measurement traffic.
+14. The normative PRD schema-v1 example has the same mandatory top-level fields
+    as a serialized `RunResult`.
 
 Add one ignored live metadata test that validates only broad response shape and
 does not expose the returned public IP in assertion messages or committed

@@ -191,17 +191,13 @@ where
                     result.target.metadata_status = MetadataStatus::Available;
                     result.target.metadata = Some(metadata);
                 }
-                Err(cancelled @ TransportError::Cancelled { .. }) => {
-                    if error.is_none() {
-                        error = Some(record_failure(
-                            &mut result,
-                            RunnerError::Cancelled {
-                                stage: "metadata".to_owned(),
-                            },
-                        ));
-                    } else {
-                        result.diagnostics.push(metadata_diagnostic(&cancelled));
-                    }
+                Err(TransportError::Cancelled { .. }) => {
+                    error = Some(record_failure(
+                        &mut result,
+                        RunnerError::Cancelled {
+                            stage: "metadata".to_owned(),
+                        },
+                    ));
                 }
                 Err(error) => result.diagnostics.push(metadata_diagnostic(&error)),
             }

@@ -160,8 +160,11 @@ Expected: FAIL because the flag/config field does not exist.
 - [ ] **Step 3: Add the flag and validated config field**
 
 ```rust
-/// Do not request or display public IP and network metadata
-#[arg(long)]
+#[arg(
+    long,
+    help = "Skip the default public IP and network metadata request",
+    long_help = "Metadata collection is enabled by default and includes the public IP, ASN, and approximate location already visible to Cloudflare. --no-metadata skips the request entirely."
+)]
 pub no_metadata: bool,
 ```
 
