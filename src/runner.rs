@@ -8,7 +8,9 @@ use thiserror::Error;
 use crate::cancellation::CancellationToken;
 use crate::clock::RunClock;
 use crate::error::TransportError;
-use crate::measurement::loaded_latency::{LoadedProbeOutcome, spawn_loaded_probe_loop};
+use crate::measurement::loaded_latency::{
+    LoadedProbeCancellation, LoadedProbeOutcome, spawn_loaded_probe_loop,
+};
 use crate::measurement::{
     MeasurementConversionError, TimingObservation, bandwidth_point, latency_point,
 };
@@ -183,9 +185,10 @@ where
             .await;
         result.usage.duration_ms = clock.elapsed().as_secs_f64() * 1_000.0;
         result.summary = reduce(&result.raw);
+        let terminally_cancelled = matches!(error.as_ref(), Some(RunnerError::Cancelled { .. }));
         if !self.metadata {
             result.target.metadata_status = MetadataStatus::Disabled;
-        } else if !cancellation.is_cancelled() {
+        } else if !cancellation.is_cancelled() && !terminally_cancelled {
             match self.transport.metadata(cancellation).await {
                 Ok(metadata) => {
                     result.target.metadata_status = MetadataStatus::Available;
@@ -411,12 +414,12 @@ where
             loaded_sequence,
             clock,
         } = progress;
-        let group_cancellation = cancellation.child_token();
+        let probe_cancellation = LoadedProbeCancellation::child_of(cancellation);
         let probe_task = self.loaded_latency.then(|| {
             spawn_loaded_probe_loop(
                 self.transport.clone(),
                 direction,
-                group_cancellation.clone(),
+                probe_cancellation.clone(),
                 reporter.clone(),
                 loaded_sequence,
                 clock.clone(),
@@ -521,7 +524,9 @@ where
             });
         }
 
-        group_cancellation.cancel();
+        let normal_group_shutdown = !cancellation.is_cancelled()
+            && !matches!(terminal_error.as_ref(), Some(RunnerError::Cancelled { .. }));
+        probe_cancellation.cancel_group(normal_group_shutdown);
         let probe_outcome = match probe_task {
             Some(task) => match task.await {
                 Ok(outcome) => outcome,

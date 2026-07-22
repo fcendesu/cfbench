@@ -334,6 +334,36 @@ async fn cancellation_before_plan_execution_skips_metadata_io() {
 }
 
 #[tokio::test]
+async fn cancelled_transport_outcome_skips_metadata_without_token_cancellation() {
+    let transport = ScriptedTransport::new([Err(TransportError::Cancelled { payload_bytes: 0 })])
+        .with_metadata_result(Ok(metadata_fixture()), Duration::ZERO);
+    let calls = transport.calls.clone();
+    let cancellation = CancellationToken::new();
+
+    let outcome = Runner::new(
+        transport,
+        plan(vec![MeasurementStep::Latency { packets: 1 }]),
+    )
+    .with_loaded_latency(false)
+    .with_metadata(true)
+    .run(&cancellation)
+    .await;
+
+    assert!(!cancellation.is_cancelled());
+    assert!(matches!(
+        outcome.error,
+        Some(RunnerError::Cancelled { ref stage }) if stage == "latency"
+    ));
+    assert_eq!(outcome.result.failures.len(), 1);
+    assert_eq!(
+        outcome.result.target.metadata_status,
+        MetadataStatus::Unavailable
+    );
+    assert!(outcome.result.target.metadata.is_none());
+    assert_eq!(*calls.lock().unwrap(), ["latency"]);
+}
+
+#[tokio::test]
 async fn cancellation_during_metadata_is_awaited_and_returns_a_cancelled_outcome() {
     let transport = ScriptedTransport::new([])
         .with_metadata_result(Ok(metadata_fixture()), Duration::from_secs(60));

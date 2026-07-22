@@ -183,6 +183,49 @@ async fn fetches_chunked_metadata_with_referer_only_and_identity_encoding() {
 }
 
 #[tokio::test]
+async fn metadata_keeps_valid_fields_when_known_coordinate_is_out_of_range() {
+    let fixture = FixtureServer::start(ResponsePlan::Metadata {
+        status: 200,
+        body: br#"{"clientIp":"192.0.2.1","latitude":1e400}"#.to_vec(),
+        chunk_bytes: 9,
+        chunk_delay: Duration::ZERO,
+    })
+    .await;
+
+    let metadata = transport_for(&fixture, Duration::from_secs(1))
+        .metadata(&CancellationToken::new())
+        .await
+        .expect("out-of-range coordinate affects only its selected leaf");
+
+    assert_eq!(metadata.public_ip.as_deref(), Some("192.0.2.1"));
+    assert_eq!(metadata.client_location.latitude, None);
+    assert_eq!(fixture.request_count(), 1);
+    assert!(fixture.response_chunk_count() > 1);
+}
+
+#[tokio::test]
+async fn metadata_ignores_out_of_range_number_in_unknown_field() {
+    let fixture = FixtureServer::start(ResponsePlan::Metadata {
+        status: 200,
+        body: br#"{"clientIp":"192.0.2.1","unknownFutureField":1e400}"#.to_vec(),
+        chunk_bytes: 11,
+        chunk_delay: Duration::ZERO,
+    })
+    .await;
+
+    let metadata = transport_for(&fixture, Duration::from_secs(1))
+        .metadata(&CancellationToken::new())
+        .await
+        .expect("out-of-range unknown field is ignored");
+
+    assert_eq!(metadata.public_ip.as_deref(), Some("192.0.2.1"));
+    assert_eq!(metadata.client_location.latitude, None);
+    assert_eq!(metadata.client_location.longitude, None);
+    assert_eq!(fixture.request_count(), 1);
+    assert!(fixture.response_chunk_count() > 1);
+}
+
+#[tokio::test]
 async fn accepts_metadata_body_at_exact_limit_in_chunks() {
     let fixture = FixtureServer::start(ResponsePlan::Metadata {
         status: 200,

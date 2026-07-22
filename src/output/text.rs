@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::fmt::Write;
 
 use crate::results::{EdgeLocation, MetadataStatus, NetworkMetadata, RunResult};
@@ -90,14 +91,33 @@ fn metadata_lines(output: &mut String, result: &RunResult) {
 
 fn available_metadata_lines(output: &mut String, metadata: &NetworkMetadata) {
     if let Some(edge) = edge_label(&metadata.edge) {
+        let edge = escape_metadata_controls(&edge);
         let _ = writeln!(output, "Edge: {edge}");
     }
     if let Some(network) = network_label(metadata) {
+        let network = escape_metadata_controls(&network);
         let _ = writeln!(output, "Network: {network}");
     }
     if let Some(public_ip) = metadata.public_ip.as_deref().and_then(nonempty) {
+        let public_ip = escape_metadata_controls(public_ip);
         let _ = writeln!(output, "Public IP: {public_ip}");
     }
+}
+
+fn escape_metadata_controls(value: &str) -> Cow<'_, str> {
+    if !value.chars().any(char::is_control) {
+        return Cow::Borrowed(value);
+    }
+
+    let mut escaped = String::with_capacity(value.len());
+    for character in value.chars() {
+        if character.is_control() {
+            escaped.extend(character.escape_default());
+        } else {
+            escaped.push(character);
+        }
+    }
+    Cow::Owned(escaped)
 }
 
 fn edge_label(edge: &EdgeLocation) -> Option<String> {

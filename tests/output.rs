@@ -79,6 +79,52 @@ fn metadata_text_renders_complete_values_between_protocol_and_metrics() {
 }
 
 #[test]
+fn metadata_text_escapes_remote_control_characters_without_changing_json() {
+    let controls = (0..=0x9f)
+        .filter_map(char::from_u32)
+        .filter(|character| character.is_control())
+        .collect::<String>();
+    let edge_colo = format!("İST{controls}\nInjected edge");
+    let organization = format!("Ağ{controls}\rInjected network");
+    let public_ip = format!("例{controls}\u{1b}[2J\nInjected IP");
+    let mut result = RunResult::empty();
+    result.started_at = STARTED_AT.to_owned();
+    result.target.metadata_status = MetadataStatus::Available;
+    result.target.metadata = Some(NetworkMetadata {
+        public_ip: Some(public_ip.clone()),
+        asn: Some(64_496),
+        as_organization: Some(organization.clone()),
+        edge: EdgeLocation {
+            colo: Some(edge_colo.clone()),
+            city: Some("Arnavutköy".to_owned()),
+            country_code: Some("TR".to_owned()),
+            ..EdgeLocation::default()
+        },
+        ..NetworkMetadata::default()
+    });
+
+    let rendered = render_text(&result);
+
+    assert!(rendered.contains("Edge: İST"));
+    assert!(rendered.contains("Network: Ağ"));
+    assert!(rendered.contains("Public IP: 例"));
+    assert!(rendered.contains("\\nInjected edge"));
+    assert!(rendered.contains("\\rInjected network"));
+    assert!(rendered.contains("\\u{1b}[2J\\nInjected IP"));
+    assert_eq!(rendered.matches('\n').count(), 21);
+    assert!(
+        rendered
+            .chars()
+            .all(|character| !character.is_control() || character == '\n')
+    );
+
+    let json: serde_json::Value = serde_json::from_str(&render_json(&result).unwrap()).unwrap();
+    assert_eq!(json["target"]["metadata"]["edge"]["colo"], edge_colo);
+    assert_eq!(json["target"]["metadata"]["as_organization"], organization);
+    assert_eq!(json["target"]["metadata"]["public_ip"], public_ip);
+}
+
+#[test]
 fn partial_metadata_text_omits_missing_components_without_dangling_punctuation() {
     let cases = [
         (
