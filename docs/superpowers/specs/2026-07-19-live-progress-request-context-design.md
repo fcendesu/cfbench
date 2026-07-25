@@ -1,6 +1,6 @@
 # Live Progress and Cloudflare Request Context Design
 
-- Status: Approved design; implementation pending
+- Status: Implemented; release validation pending
 - Date: 2026-07-19
 - Product: `cfbench`
 - Compatibility impact: additive stderr progress; corrected production headers

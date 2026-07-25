@@ -92,7 +92,7 @@ fn metadata_lines(output: &mut String, result: &RunResult) {
 fn available_metadata_lines(output: &mut String, metadata: &NetworkMetadata) {
     if let Some(edge) = edge_label(&metadata.edge) {
         let edge = escape_metadata_controls(&edge);
-        let _ = writeln!(output, "Edge: {edge}");
+        let _ = writeln!(output, "Edge (informational): {edge}");
     }
     if let Some(network) = network_label(metadata) {
         let network = escape_metadata_controls(&network);

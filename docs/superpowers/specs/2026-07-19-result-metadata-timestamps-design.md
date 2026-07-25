@@ -1,6 +1,6 @@
 # Result Metadata and Timestamps Design
 
-- Status: Approved design; implementation pending
+- Status: Implemented; release validation pending
 - Date: 2026-07-19
 - Product: `cfbench`
 - Compatibility impact: additive CLI and JSON fields
@@ -203,7 +203,7 @@ When metadata succeeds, add this compact block after protocol and before speed
 metrics:
 
 ```text
-Edge: IST — Arnavutkoy, TR
+Edge (informational): IST — Arnavutkoy, TR
 Network: TurkNet Iletisim Hizmetleri A.S. (AS12735)
 Public IP: 2a02:ff0:...
 Measured at: 2026-07-19T09:02:59.123Z

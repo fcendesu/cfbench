@@ -14,7 +14,7 @@ use crate::error::TransportError;
 use crate::measurement::TimingObservation;
 use crate::results::NetworkMetadata;
 
-use super::metadata::metadata_from_value;
+use super::metadata::{MetadataDecodeError, metadata_from_slice};
 use super::server_timing::server_duration;
 use super::upload_body::stream_upload;
 
@@ -102,13 +102,15 @@ impl ReqwestTransport {
             body.extend_from_slice(&chunk);
         }
 
-        let value =
-            serde_json::from_slice(&body).map_err(|source| TransportError::MetadataJson {
+        metadata_from_slice(&body).map_err(|error| match error {
+            MetadataDecodeError::Json(source) => TransportError::MetadataJson {
                 endpoint: endpoint.clone(),
                 source,
-            })?;
-        metadata_from_value(value)
-            .map_err(|source| TransportError::MetadataStructure { endpoint, source })
+            },
+            MetadataDecodeError::Structure(source) => {
+                TransportError::MetadataStructure { endpoint, source }
+            }
+        })
     }
 
     pub async fn download(

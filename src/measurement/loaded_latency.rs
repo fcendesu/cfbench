@@ -1,5 +1,5 @@
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use tokio::task::JoinHandle;
@@ -27,28 +27,34 @@ pub(crate) struct LoadedProbeOutcome {
 pub(crate) struct LoadedProbeCancellation {
     group: CancellationToken,
     parent: CancellationToken,
-    normal_group_shutdown: Arc<AtomicBool>,
 }
 
 impl LoadedProbeCancellation {
-    pub fn child_of(parent: &CancellationToken) -> Self {
+    pub fn new(parent: &CancellationToken) -> Self {
         Self {
-            group: parent.child_token(),
+            // Parent cancellation and normal group teardown are deliberately
+            // independent inputs to the biased selections below. A child token
+            // would publish cancellation before its reason is linearized.
+            group: CancellationToken::new(),
             parent: parent.clone(),
-            normal_group_shutdown: Arc::new(AtomicBool::new(false)),
         }
     }
 
-    pub fn cancel_group(&self, normal_group_shutdown: bool) {
-        if normal_group_shutdown {
-            self.normal_group_shutdown.store(true, Ordering::Release);
-        }
+    pub fn cancel_group(&self) {
         self.group.cancel();
     }
+}
 
-    fn should_report_parent_cancellation(&self) -> bool {
-        self.parent.is_cancelled() && !self.normal_group_shutdown.load(Ordering::Acquire)
-    }
+enum ProbeWait {
+    ParentCancelled,
+    GroupCancelled,
+    Elapsed,
+}
+
+enum ProbeRequest {
+    ParentCancelled,
+    GroupCancelled,
+    Completed(Result<crate::measurement::TimingObservation, TransportError>),
 }
 
 pub(crate) fn spawn_loaded_probe_loop<T>(
@@ -64,16 +70,43 @@ where
 {
     tokio::spawn(async move {
         let mut outcome = LoadedProbeOutcome::default();
-        if wait_or_cancel(INITIAL_PROBE_DELAY, &cancellation.group).await {
+        if !matches!(
+            wait_or_cancel(INITIAL_PROBE_DELAY, &cancellation).await,
+            ProbeWait::Elapsed
+        ) {
             return outcome;
         }
 
         loop {
             let started = Instant::now();
-            match transport
-                .loaded_latency(direction, &cancellation.group)
-                .await
-            {
+            let request = transport.loaded_latency(direction, &cancellation.group);
+            tokio::pin!(request);
+            let selection = tokio::select! {
+                biased;
+                () = cancellation.parent.cancelled() => ProbeRequest::ParentCancelled,
+                () = cancellation.group.cancelled() => ProbeRequest::GroupCancelled,
+                result = &mut request => ProbeRequest::Completed(result),
+            };
+            let request = match selection {
+                ProbeRequest::ParentCancelled => {
+                    cancellation.group.cancel();
+                    let _ = request.await;
+                    progress.emit(ProgressEvent::RequestFailed {
+                        stage: ProgressStage::LoadedLatency { direction },
+                        current: None,
+                        total: None,
+                        kind: ProgressFailureKind::Cancelled,
+                    });
+                    break;
+                }
+                ProbeRequest::GroupCancelled => {
+                    let _ = request.await;
+                    break;
+                }
+                ProbeRequest::Completed(result) => result,
+            };
+
+            match request {
                 Ok(observation) => {
                     let endpoint = observation.endpoint.clone();
                     if let Some(version) = observation.http_version.as_ref() {
@@ -107,17 +140,6 @@ where
                         }
                     }
                 }
-                Err(TransportError::Cancelled { .. }) if cancellation.group.is_cancelled() => {
-                    if cancellation.should_report_parent_cancellation() {
-                        progress.emit(ProgressEvent::RequestFailed {
-                            stage: ProgressStage::LoadedLatency { direction },
-                            current: None,
-                            total: None,
-                            kind: ProgressFailureKind::Cancelled,
-                        });
-                    }
-                    break;
-                }
                 Err(error) => {
                     let kind = crate::runner::progress_failure_kind(&error);
                     progress.emit(ProgressEvent::RequestFailed {
@@ -134,7 +156,10 @@ where
             }
 
             let remaining = PROBE_THROTTLE.saturating_sub(started.elapsed());
-            if wait_or_cancel(remaining, &cancellation.group).await {
+            if !matches!(
+                wait_or_cancel(remaining, &cancellation).await,
+                ProbeWait::Elapsed
+            ) {
                 break;
             }
         }
@@ -149,10 +174,11 @@ const fn direction_name(direction: Direction) -> &'static str {
     }
 }
 
-async fn wait_or_cancel(duration: Duration, cancellation: &CancellationToken) -> bool {
+async fn wait_or_cancel(duration: Duration, cancellation: &LoadedProbeCancellation) -> ProbeWait {
     tokio::select! {
         biased;
-        () = cancellation.cancelled() => true,
-        () = tokio::time::sleep(duration) => false,
+        () = cancellation.parent.cancelled() => ProbeWait::ParentCancelled,
+        () = cancellation.group.cancelled() => ProbeWait::GroupCancelled,
+        () = tokio::time::sleep(duration) => ProbeWait::Elapsed,
     }
 }

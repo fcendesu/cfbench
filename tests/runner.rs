@@ -1,5 +1,6 @@
 use std::collections::VecDeque;
 use std::error::Error;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -150,6 +151,87 @@ fn metadata_fixture() -> NetworkMetadata {
     }
 }
 
+#[derive(Clone, Copy)]
+enum FinalOperationResult {
+    Success,
+    Failure,
+    Cancelled,
+}
+
+struct FinalOperationCancellationTransport {
+    parent: CancellationToken,
+    result: FinalOperationResult,
+    metadata_calls: Arc<AtomicUsize>,
+}
+
+impl MeasurementTransport for FinalOperationCancellationTransport {
+    fn metadata<'a>(&'a self, _: &'a CancellationToken) -> MetadataFuture<'a> {
+        Box::pin(async move {
+            self.metadata_calls.fetch_add(1, Ordering::SeqCst);
+            Ok(metadata_fixture())
+        })
+    }
+
+    fn latency<'a>(&'a self, _: &'a CancellationToken) -> MeasurementFuture<'a> {
+        Box::pin(async move {
+            self.parent.cancel();
+            match self.result {
+                FinalOperationResult::Success => {
+                    Ok(TimingObservation::from_millis(20.0, 20.0, 10.0, 0, "1.1"))
+                }
+                FinalOperationResult::Failure => Err(TransportError::HttpStatus {
+                    endpoint: "https://fixture.invalid/__down".to_owned(),
+                    status: 503,
+                    payload_bytes: 0,
+                }),
+                FinalOperationResult::Cancelled => {
+                    Err(TransportError::Cancelled { payload_bytes: 0 })
+                }
+            }
+        })
+    }
+
+    fn loaded_latency<'a>(
+        &'a self,
+        _: Direction,
+        _: &'a CancellationToken,
+    ) -> MeasurementFuture<'a> {
+        unreachable!("test plan contains no loaded-latency operation")
+    }
+
+    fn download<'a>(
+        &'a self,
+        _: u64,
+        _: Option<&'a str>,
+        _: &'a CancellationToken,
+    ) -> MeasurementFuture<'a> {
+        unreachable!("test plan contains no download operation")
+    }
+
+    fn upload<'a>(&'a self, _: u64, _: &'a CancellationToken) -> MeasurementFuture<'a> {
+        unreachable!("test plan contains no upload operation")
+    }
+}
+
+fn final_operation_cancellation_transport(
+    parent: &CancellationToken,
+    result: FinalOperationResult,
+) -> (FinalOperationCancellationTransport, Arc<AtomicUsize>) {
+    let metadata_calls = Arc::new(AtomicUsize::new(0));
+    (
+        FinalOperationCancellationTransport {
+            parent: parent.clone(),
+            result,
+            metadata_calls: metadata_calls.clone(),
+        },
+        metadata_calls,
+    )
+}
+
+fn one_latency_plan() -> MeasurementPlan {
+    plan(vec![MeasurementStep::Latency { packets: 1 }])
+}
+
 #[tokio::test]
 async fn runner_defaults_to_disabled_metadata_for_backward_compatible_test_transports() {
     let transport =
@@ -170,6 +252,112 @@ async fn runner_defaults_to_disabled_metadata_for_backward_compatible_test_trans
     );
     assert!(outcome.result.target.metadata.is_none());
     assert_eq!(*calls.lock().unwrap(), ["latency"]);
+}
+
+#[tokio::test]
+async fn direct_run_reconciles_parent_cancellation_after_final_success_and_skips_metadata() {
+    let cancellation = CancellationToken::new();
+    let (transport, metadata_calls) =
+        final_operation_cancellation_transport(&cancellation, FinalOperationResult::Success);
+
+    let outcome = Runner::new(transport, one_latency_plan())
+        .with_loaded_latency(false)
+        .with_metadata(true)
+        .run(&cancellation)
+        .await;
+
+    assert!(matches!(
+        outcome.error,
+        Some(RunnerError::Cancelled { ref stage }) if stage == "run"
+    ));
+    assert_eq!(outcome.result.raw.initial_latency.len(), 1);
+    assert_eq!(
+        outcome.result.failures,
+        ["measurement cancelled during run"]
+    );
+    assert_eq!(metadata_calls.load(Ordering::SeqCst), 0);
+    assert_eq!(
+        outcome.result.target.metadata_status,
+        MetadataStatus::Unavailable
+    );
+}
+
+#[tokio::test]
+async fn direct_run_with_progress_reconciles_final_cancellation_and_keeps_the_point_event() {
+    let cancellation = CancellationToken::new();
+    let (transport, _) =
+        final_operation_cancellation_transport(&cancellation, FinalOperationResult::Success);
+    let (progress, receiver) = ProgressReporter::channel(8);
+
+    let outcome = Runner::new(transport, one_latency_plan())
+        .with_loaded_latency(false)
+        .run_with_progress(&cancellation, progress)
+        .await;
+    let events = receiver.into_iter().collect::<Vec<_>>();
+
+    assert!(matches!(
+        outcome.error,
+        Some(RunnerError::Cancelled { ref stage }) if stage == "run"
+    ));
+    assert_eq!(outcome.result.raw.initial_latency.len(), 1);
+    assert_eq!(outcome.result.failures.len(), 1);
+    assert_eq!(
+        events,
+        [ProgressEvent::LatencyCompleted {
+            current: 1,
+            total: 1,
+            latency_ms: 10.0,
+        }]
+    );
+}
+
+#[tokio::test]
+async fn final_parent_cancellation_supersedes_prior_failure_and_preserves_history() {
+    let cancellation = CancellationToken::new();
+    let (transport, metadata_calls) =
+        final_operation_cancellation_transport(&cancellation, FinalOperationResult::Failure);
+
+    let outcome = Runner::new(transport, one_latency_plan())
+        .with_loaded_latency(false)
+        .with_metadata(true)
+        .run(&cancellation)
+        .await;
+
+    assert!(matches!(
+        outcome.error,
+        Some(RunnerError::Cancelled { ref stage }) if stage == "run"
+    ));
+    assert_eq!(outcome.result.failures.len(), 2);
+    assert!(outcome.result.failures[0].contains("transport failed during latency"));
+    assert_eq!(
+        outcome.result.failures[1],
+        "measurement cancelled during run"
+    );
+    assert_eq!(metadata_calls.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn final_transport_cancellation_is_not_recorded_twice() {
+    let cancellation = CancellationToken::new();
+    let (transport, metadata_calls) =
+        final_operation_cancellation_transport(&cancellation, FinalOperationResult::Cancelled);
+
+    let outcome = Runner::new(transport, one_latency_plan())
+        .with_loaded_latency(false)
+        .with_metadata(true)
+        .run(&cancellation)
+        .await;
+
+    assert!(matches!(
+        outcome.error,
+        Some(RunnerError::Cancelled { ref stage }) if stage == "latency"
+    ));
+    assert_eq!(outcome.result.failures.len(), 1);
+    assert_eq!(
+        outcome.result.failures[0],
+        "measurement cancelled during latency"
+    );
+    assert_eq!(metadata_calls.load(Ordering::SeqCst), 0);
 }
 
 #[tokio::test(start_paused = true)]

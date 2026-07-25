@@ -176,7 +176,14 @@ async fn renderer_failure_after_channel_fills_does_not_deadlock_or_change_result
     .expect("a full progress channel and writer failure must not deadlock");
 
     assert!(matches!(run.progress_error, Some(AppError::Write(_))));
-    assert!(run.outcome.error.is_none());
+    match run.outcome.error.as_ref() {
+        Some(RunnerError::Cancelled { stage }) => {
+            assert_eq!(stage, "run");
+            assert_eq!(run.outcome.result.failures.len(), 1);
+        }
+        None => assert!(run.outcome.result.failures.is_empty()),
+        Some(error) => panic!("unexpected renderer-cancellation outcome: {error}"),
+    }
     assert_eq!(run.outcome.result.raw.latency.len(), PACKETS as usize);
 }
 
@@ -360,6 +367,7 @@ async fn selected_signal_forces_terminal_outcome_after_concurrent_final_success(
         Some(RunnerError::Cancelled { ref stage }) if stage == "run"
     ));
     assert_eq!(outcome.result.raw.initial_latency.len(), 1);
+    assert_eq!(outcome.result.failures.len(), 1);
     assert!(
         outcome
             .result

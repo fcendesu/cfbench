@@ -105,7 +105,7 @@ The ordinary line-oriented renderer produces output in this form:
 cfbench 0.1.0
 Target: Cloudflare edge
 Protocol: IPv6 / HTTP/2
-Edge: IST — Arnavutkoy, TR
+Edge (informational): IST — Arnavutkoy, TR
 Network: Example Network (AS64496)
 Public IP: 2001:db8::1
 Measured at: 2026-07-19T09:02:59.123Z

@@ -28,6 +28,7 @@ struct TimedTransport {
     ignore_transfer_cancellation: bool,
     probe_cancel_observed: Option<Arc<Notify>>,
     release_cancelled_probe: Option<Arc<Notify>>,
+    captured_probe_token: Option<Arc<Mutex<Option<CancellationToken>>>>,
 }
 
 impl TimedTransport {
@@ -46,6 +47,7 @@ impl TimedTransport {
             ignore_transfer_cancellation: false,
             probe_cancel_observed: None,
             release_cancelled_probe: None,
+            captured_probe_token: None,
         }
     }
 }
@@ -61,6 +63,9 @@ impl MeasurementTransport for TimedTransport {
         cancellation: &'a CancellationToken,
     ) -> MeasurementFuture<'a> {
         Box::pin(async move {
+            if let Some(captured) = &self.captured_probe_token {
+                *captured.lock().unwrap() = Some(cancellation.clone());
+            }
             self.probe_starts.fetch_add(1, Ordering::SeqCst);
             self.active_probes.fetch_add(1, Ordering::SeqCst);
             let result = if self.fail_probe {
@@ -455,6 +460,10 @@ async fn parent_cancellation_after_normal_group_teardown_stays_silent() {
     tokio::time::advance(Duration::from_millis(300)).await;
     probe_cancel_observed.notified().await;
     assert_eq!(active.load(Ordering::SeqCst), 1);
+    assert!(
+        !task.is_finished(),
+        "runner awaits the cancelled probe request"
+    );
     cancellation.cancel();
     release_cancelled_probe.notify_one();
     let outcome = task.await.unwrap();
@@ -473,7 +482,11 @@ async fn parent_cancellation_after_normal_group_teardown_stays_silent() {
         })
         .count();
 
-    assert!(outcome.error.is_none());
+    assert!(matches!(
+        outcome.error,
+        Some(RunnerError::Cancelled { ref stage }) if stage == "run"
+    ));
+    assert_eq!(outcome.result.failures.len(), 1);
     assert!(outcome.result.diagnostics.is_empty());
     assert_eq!(outcome.result.raw.download.len(), 1);
     assert_eq!(loaded_failures, 0);
@@ -530,11 +543,75 @@ async fn parent_cancellation_is_reported_when_transfer_completes_concurrently() 
         })
         .count();
 
-    assert!(outcome.error.is_none());
+    assert!(matches!(
+        outcome.error,
+        Some(RunnerError::Cancelled { ref stage }) if stage == "run"
+    ));
+    assert_eq!(outcome.result.failures.len(), 1);
     assert!(outcome.result.diagnostics.is_empty());
     assert_eq!(outcome.result.raw.download.len(), 1);
     assert_eq!(loaded_cancellations, 1);
     assert_eq!(active.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test(start_paused = true)]
+async fn parent_cancellation_is_linearized_by_probe_controller_not_child_propagation() {
+    let captured_probe_token = Arc::new(Mutex::new(None));
+    let probe_cancel_observed = Arc::new(Notify::new());
+    let transport = TimedTransport {
+        block_probe_until_cancelled: true,
+        captured_probe_token: Some(captured_probe_token.clone()),
+        probe_cancel_observed: Some(probe_cancel_observed.clone()),
+        ..TimedTransport::new([(Duration::from_secs(30), 30_000.0)])
+    };
+    let cancellation = CancellationToken::new();
+    let run_token = cancellation.clone();
+    let (progress, receiver) = ProgressReporter::channel(256);
+    let task = tokio::spawn(async move {
+        Runner::new(transport, download_plan(1))
+            .run_with_progress(&run_token, progress)
+            .await
+    });
+
+    tokio::task::yield_now().await;
+    tokio::time::advance(Duration::from_millis(20)).await;
+    tokio::task::yield_now().await;
+    let request_token = captured_probe_token
+        .lock()
+        .unwrap()
+        .clone()
+        .expect("active probe exposes its request cancellation token");
+    assert!(!request_token.is_cancelled());
+
+    cancellation.cancel();
+    assert!(
+        !request_token.is_cancelled(),
+        "the parent must not auto-cancel the independent probe token before the biased controller selects a reason"
+    );
+    probe_cancel_observed.notified().await;
+    assert!(request_token.is_cancelled());
+
+    let outcome = task.await.unwrap();
+    let loaded_cancellations = receiver
+        .into_iter()
+        .filter(|event| {
+            matches!(
+                event,
+                ProgressEvent::RequestFailed {
+                    stage: ProgressStage::LoadedLatency {
+                        direction: Direction::Download,
+                    },
+                    current: None,
+                    total: None,
+                    kind: ProgressFailureKind::Cancelled,
+                }
+            )
+        })
+        .count();
+
+    assert!(matches!(outcome.error, Some(RunnerError::Cancelled { .. })));
+    assert_eq!(outcome.result.failures.len(), 1);
+    assert_eq!(loaded_cancellations, 1);
 }
 
 #[tokio::test(start_paused = true)]

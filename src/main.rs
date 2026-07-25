@@ -157,7 +157,7 @@ mod tests {
         );
         assert!(outcome.result.target.metadata.is_none());
         let rendered = render_text(&outcome.result);
-        assert!(!rendered.contains("Edge:"));
+        assert!(!rendered.contains("Edge (informational):"));
         assert!(!rendered.contains("Network:"));
         assert!(!rendered.contains("Public IP:"));
         assert!(!rendered.contains("Metadata:"));

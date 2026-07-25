@@ -68,7 +68,7 @@ fn metadata_text_renders_complete_values_between_protocol_and_metrics() {
 
     assert!(rendered.contains(concat!(
         "Protocol: unavailable\n",
-        "Edge: IST — Arnavutkoy, TR\n",
+        "Edge (informational): IST — Arnavutkoy, TR\n",
         "Network: TurkNet Iletisim Hizmetleri A.S. (AS12735)\n",
         "Public IP: 2a02:ff0::1\n",
         "Measured at: 2026-07-19T09:02:59.123Z\n",
@@ -105,7 +105,7 @@ fn metadata_text_escapes_remote_control_characters_without_changing_json() {
 
     let rendered = render_text(&result);
 
-    assert!(rendered.contains("Edge: İST"));
+    assert!(rendered.contains("Edge (informational): İST"));
     assert!(rendered.contains("Network: Ağ"));
     assert!(rendered.contains("Public IP: 例"));
     assert!(rendered.contains("\\nInjected edge"));
@@ -135,7 +135,7 @@ fn partial_metadata_text_omits_missing_components_without_dangling_punctuation()
             },
             None,
             Some(12_735),
-            "Edge: IST — TR\nNetwork: AS12735\n",
+            "Edge (informational): IST — TR\nNetwork: AS12735\n",
         ),
         (
             EdgeLocation {
@@ -144,7 +144,7 @@ fn partial_metadata_text_omits_missing_components_without_dangling_punctuation()
             },
             Some("TurkNet"),
             None,
-            "Edge: Arnavutkoy\nNetwork: TurkNet\n",
+            "Edge (informational): Arnavutkoy\nNetwork: TurkNet\n",
         ),
         (EdgeLocation::default(), None, None, ""),
     ];
@@ -165,8 +165,8 @@ fn partial_metadata_text_omits_missing_components_without_dangling_punctuation()
         assert!(rendered.contains(&format!(
             "Protocol: unavailable\n{expected_lines}Measured at: {STARTED_AT}\n"
         )));
-        assert!(!rendered.contains("Edge: —"));
-        assert!(!rendered.contains("Edge: ,"));
+        assert!(!rendered.contains("Edge (informational): —"));
+        assert!(!rendered.contains("Edge (informational): ,"));
         assert!(!rendered.contains("Network: ()"));
     }
 }
@@ -195,7 +195,7 @@ fn unavailable_and_disabled_metadata_have_distinct_text_output() {
     });
     let disabled_text = render_text(&disabled);
 
-    assert!(!disabled_text.contains("Edge:"));
+    assert!(!disabled_text.contains("Edge (informational):"));
     assert!(!disabled_text.contains("Network:"));
     assert!(!disabled_text.contains("Public IP:"));
     assert!(!disabled_text.contains("Metadata:"));

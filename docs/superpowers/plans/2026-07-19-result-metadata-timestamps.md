@@ -321,7 +321,7 @@ git commit -m "feat(runner): enrich runs with metadata and timestamps"
 Cover complete, partial, unavailable, and disabled metadata:
 
 ```rust
-assert!(text.contains("Edge: IST — Arnavutkoy, TR"));
+assert!(text.contains("Edge (informational): IST — Arnavutkoy, TR"));
 assert!(text.contains("Network: TurkNet Iletisim Hizmetleri A.S. (AS12735)"));
 assert!(text.contains("Public IP: 2a02:ff0::1"));
 assert!(text.contains("Measured at: 2026-07-19T09:02:59.123Z"));

@@ -38,6 +38,12 @@ pub trait MeasurementTransport: Send + Sync + 'static {
 
     fn latency<'a>(&'a self, cancellation: &'a CancellationToken) -> MeasurementFuture<'a>;
 
+    /// Starts one loaded probe in the caller's task.
+    ///
+    /// Implementations must not detach request work and must complete promptly
+    /// after `cancellation` is cancelled. The probe controller cancels this
+    /// token and awaits the same future before it reports parent cancellation
+    /// or treats normal group teardown as silent.
     fn loaded_latency<'a>(
         &'a self,
         direction: Direction,
@@ -185,10 +191,11 @@ where
             .await;
         result.usage.duration_ms = clock.elapsed().as_secs_f64() * 1_000.0;
         result.summary = reduce(&result.raw);
+        reconcile_parent_cancellation(&mut result, &mut error, cancellation);
         let terminally_cancelled = matches!(error.as_ref(), Some(RunnerError::Cancelled { .. }));
         if !self.metadata {
             result.target.metadata_status = MetadataStatus::Disabled;
-        } else if !cancellation.is_cancelled() && !terminally_cancelled {
+        } else if !terminally_cancelled {
             match self.transport.metadata(cancellation).await {
                 Ok(metadata) => {
                     result.target.metadata_status = MetadataStatus::Available;
@@ -202,9 +209,15 @@ where
                         },
                     ));
                 }
-                Err(error) => result.diagnostics.push(metadata_diagnostic(&error)),
+                Err(_) if cancellation.is_cancelled() => {
+                    reconcile_parent_cancellation(&mut result, &mut error, cancellation);
+                }
+                Err(metadata_error) => result
+                    .diagnostics
+                    .push(metadata_diagnostic(&metadata_error)),
             }
         }
+        reconcile_parent_cancellation(&mut result, &mut error, cancellation);
 
         RunOutcome { result, error }
     }
@@ -414,7 +427,7 @@ where
             loaded_sequence,
             clock,
         } = progress;
-        let probe_cancellation = LoadedProbeCancellation::child_of(cancellation);
+        let probe_cancellation = LoadedProbeCancellation::new(cancellation);
         let probe_task = self.loaded_latency.then(|| {
             spawn_loaded_probe_loop(
                 self.transport.clone(),
@@ -524,9 +537,7 @@ where
             });
         }
 
-        let normal_group_shutdown = !cancellation.is_cancelled()
-            && !matches!(terminal_error.as_ref(), Some(RunnerError::Cancelled { .. }));
-        probe_cancellation.cancel_group(normal_group_shutdown);
+        probe_cancellation.cancel_group();
         let probe_outcome = match probe_task {
             Some(task) => match task.await {
                 Ok(outcome) => outcome,
@@ -593,6 +604,22 @@ fn map_transport_error(stage: &str, error: TransportError) -> RunnerError {
 fn record_failure(result: &mut RunResult, error: RunnerError) -> RunnerError {
     result.failures.push(error.to_string());
     error
+}
+
+fn reconcile_parent_cancellation(
+    result: &mut RunResult,
+    error: &mut Option<RunnerError>,
+    cancellation: &CancellationToken,
+) {
+    if cancellation.is_cancelled() && !matches!(error.as_ref(), Some(RunnerError::Cancelled { .. }))
+    {
+        *error = Some(record_failure(
+            result,
+            RunnerError::Cancelled {
+                stage: "run".to_owned(),
+            },
+        ));
+    }
 }
 
 fn record_request_failure(

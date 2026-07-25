@@ -37,6 +37,18 @@ fn metadata_body_of_len(len: usize) -> Vec<u8> {
     body
 }
 
+fn deeply_nested_value(depth: usize) -> String {
+    format!("{}null{}", "[".repeat(depth), "]".repeat(depth))
+}
+
+fn metadata_with_deep_unknown(depth: usize) -> Vec<u8> {
+    format!(
+        r#"{{"clientIp":"192.0.2.1","unknownFutureField":{}}}"#,
+        deeply_nested_value(depth)
+    )
+    .into_bytes()
+}
+
 #[test]
 fn maps_cloudflare_meta_and_rejects_only_invalid_leaves() {
     let metadata = metadata_from_value(json!({
@@ -221,6 +233,83 @@ async fn metadata_ignores_out_of_range_number_in_unknown_field() {
     assert_eq!(metadata.public_ip.as_deref(), Some("192.0.2.1"));
     assert_eq!(metadata.client_location.latitude, None);
     assert_eq!(metadata.client_location.longitude, None);
+    assert_eq!(fixture.request_count(), 1);
+    assert!(fixture.response_chunk_count() > 1);
+}
+
+#[tokio::test]
+async fn metadata_ignores_unknown_value_beyond_serde_jsons_default_depth() {
+    let fixture = FixtureServer::start(ResponsePlan::Metadata {
+        status: 200,
+        body: metadata_with_deep_unknown(160),
+        chunk_bytes: 13,
+        chunk_delay: Duration::ZERO,
+    })
+    .await;
+
+    let metadata = transport_for(&fixture, Duration::from_secs(1))
+        .metadata(&CancellationToken::new())
+        .await
+        .expect("deep additive metadata field is skipped");
+
+    assert_eq!(metadata.public_ip.as_deref(), Some("192.0.2.1"));
+    assert_eq!(fixture.request_count(), 1);
+    assert!(fixture.response_chunk_count() > 1);
+}
+
+#[tokio::test]
+async fn metadata_ignores_deep_wrong_coordinate_leaves_and_keeps_valid_siblings() {
+    let body = format!(
+        r#"{{"clientIp":"192.0.2.1","latitude":{},"city":"Istanbul","colo":{{"iata":"IST","lat":{},"city":"Arnavutkoy"}}}}"#,
+        deeply_nested_value(160),
+        deeply_nested_value(192),
+    )
+    .into_bytes();
+    let fixture = FixtureServer::start(ResponsePlan::Metadata {
+        status: 200,
+        body,
+        chunk_bytes: 17,
+        chunk_delay: Duration::ZERO,
+    })
+    .await;
+
+    let metadata = transport_for(&fixture, Duration::from_secs(1))
+        .metadata(&CancellationToken::new())
+        .await
+        .expect("deep wrong optional leaves do not discard valid siblings");
+
+    assert_eq!(metadata.public_ip.as_deref(), Some("192.0.2.1"));
+    assert_eq!(metadata.client_location.city.as_deref(), Some("Istanbul"));
+    assert_eq!(metadata.client_location.latitude, None);
+    assert_eq!(metadata.edge.colo.as_deref(), Some("IST"));
+    assert_eq!(metadata.edge.city.as_deref(), Some("Arnavutkoy"));
+    assert_eq!(metadata.edge.latitude, None);
+    assert_eq!(fixture.request_count(), 1);
+    assert!(fixture.response_chunk_count() > 1);
+}
+
+#[tokio::test]
+async fn metadata_skips_near_body_limit_unknown_depth_without_recursive_parsing() {
+    let fixed_bytes = metadata_with_deep_unknown(0).len();
+    let depth = (METADATA_BODY_LIMIT - fixed_bytes) / 2;
+    let body = metadata_with_deep_unknown(depth);
+    assert!(depth > 30_000);
+    assert!(body.len() <= METADATA_BODY_LIMIT);
+    assert!(METADATA_BODY_LIMIT - body.len() < 2);
+    let fixture = FixtureServer::start(ResponsePlan::Metadata {
+        status: 200,
+        body,
+        chunk_bytes: 1_003,
+        chunk_delay: Duration::ZERO,
+    })
+    .await;
+
+    let metadata = transport_for(&fixture, Duration::from_secs(2))
+        .metadata(&CancellationToken::new())
+        .await
+        .expect("body-bounded maximum-depth unknown field is skipped stack-safely");
+
+    assert_eq!(metadata.public_ip.as_deref(), Some("192.0.2.1"));
     assert_eq!(fixture.request_count(), 1);
     assert!(fixture.response_chunk_count() > 1);
 }
