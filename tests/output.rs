@@ -1,5 +1,7 @@
 use cfbench::output::{render_json, render_text};
-use cfbench::results::RunResult;
+use cfbench::results::{EdgeLocation, MetadataStatus, NetworkMetadata, RunResult};
+
+const STARTED_AT: &str = "2026-07-19T09:02:59.123Z";
 
 #[test]
 fn render_json_is_one_document_with_nulls() {
@@ -23,6 +25,8 @@ fn empty_text_result_uses_stable_labels_and_unavailable_values() {
             "cfbench 0.1.0\n",
             "Target: Cloudflare edge\n",
             "Protocol: unavailable\n",
+            "Metadata: unavailable\n",
+            "Measured at: unavailable\n",
             "\n",
             "Idle latency: unavailable\n",
             "Idle jitter: unavailable\n",
@@ -40,6 +44,162 @@ fn empty_text_result_uses_stable_labels_and_unavailable_values() {
         )
     );
     assert!(!rendered.contains("\u{1b}["));
+}
+
+#[test]
+fn metadata_text_renders_complete_values_between_protocol_and_metrics() {
+    let mut result = RunResult::empty();
+    result.started_at = STARTED_AT.to_owned();
+    result.target.metadata_status = MetadataStatus::Available;
+    result.target.metadata = Some(NetworkMetadata {
+        public_ip: Some("2a02:ff0::1".to_owned()),
+        asn: Some(12_735),
+        as_organization: Some("TurkNet Iletisim Hizmetleri A.S.".to_owned()),
+        edge: EdgeLocation {
+            colo: Some("IST".to_owned()),
+            city: Some("Arnavutkoy".to_owned()),
+            country_code: Some("TR".to_owned()),
+            ..EdgeLocation::default()
+        },
+        ..NetworkMetadata::default()
+    });
+
+    let rendered = render_text(&result);
+
+    assert!(rendered.contains(concat!(
+        "Protocol: unavailable\n",
+        "Edge (informational): IST — Arnavutkoy, TR\n",
+        "Network: TurkNet Iletisim Hizmetleri A.S. (AS12735)\n",
+        "Public IP: 2a02:ff0::1\n",
+        "Measured at: 2026-07-19T09:02:59.123Z\n",
+        "\n",
+        "Idle latency: unavailable\n",
+    )));
+    assert!(!rendered.contains("Metadata: unavailable"));
+}
+
+#[test]
+fn metadata_text_escapes_remote_control_characters_without_changing_json() {
+    let controls = (0..=0x9f)
+        .filter_map(char::from_u32)
+        .filter(|character| character.is_control())
+        .collect::<String>();
+    let edge_colo = format!("İST{controls}\nInjected edge");
+    let organization = format!("Ağ{controls}\rInjected network");
+    let public_ip = format!("例{controls}\u{1b}[2J\nInjected IP");
+    let mut result = RunResult::empty();
+    result.started_at = STARTED_AT.to_owned();
+    result.target.metadata_status = MetadataStatus::Available;
+    result.target.metadata = Some(NetworkMetadata {
+        public_ip: Some(public_ip.clone()),
+        asn: Some(64_496),
+        as_organization: Some(organization.clone()),
+        edge: EdgeLocation {
+            colo: Some(edge_colo.clone()),
+            city: Some("Arnavutköy".to_owned()),
+            country_code: Some("TR".to_owned()),
+            ..EdgeLocation::default()
+        },
+        ..NetworkMetadata::default()
+    });
+
+    let rendered = render_text(&result);
+
+    assert!(rendered.contains("Edge (informational): İST"));
+    assert!(rendered.contains("Network: Ağ"));
+    assert!(rendered.contains("Public IP: 例"));
+    assert!(rendered.contains("\\nInjected edge"));
+    assert!(rendered.contains("\\rInjected network"));
+    assert!(rendered.contains("\\u{1b}[2J\\nInjected IP"));
+    assert_eq!(rendered.matches('\n').count(), 21);
+    assert!(
+        rendered
+            .chars()
+            .all(|character| !character.is_control() || character == '\n')
+    );
+
+    let json: serde_json::Value = serde_json::from_str(&render_json(&result).unwrap()).unwrap();
+    assert_eq!(json["target"]["metadata"]["edge"]["colo"], edge_colo);
+    assert_eq!(json["target"]["metadata"]["as_organization"], organization);
+    assert_eq!(json["target"]["metadata"]["public_ip"], public_ip);
+}
+
+#[test]
+fn partial_metadata_text_omits_missing_components_without_dangling_punctuation() {
+    let cases = [
+        (
+            EdgeLocation {
+                colo: Some("IST".to_owned()),
+                country_code: Some("TR".to_owned()),
+                ..EdgeLocation::default()
+            },
+            None,
+            Some(12_735),
+            "Edge (informational): IST — TR\nNetwork: AS12735\n",
+        ),
+        (
+            EdgeLocation {
+                city: Some("Arnavutkoy".to_owned()),
+                ..EdgeLocation::default()
+            },
+            Some("TurkNet"),
+            None,
+            "Edge (informational): Arnavutkoy\nNetwork: TurkNet\n",
+        ),
+        (EdgeLocation::default(), None, None, ""),
+    ];
+
+    for (edge, organization, asn, expected_lines) in cases {
+        let mut result = RunResult::empty();
+        result.started_at = STARTED_AT.to_owned();
+        result.target.metadata_status = MetadataStatus::Available;
+        result.target.metadata = Some(NetworkMetadata {
+            asn,
+            as_organization: organization.map(ToOwned::to_owned),
+            edge,
+            ..NetworkMetadata::default()
+        });
+
+        let rendered = render_text(&result);
+
+        assert!(rendered.contains(&format!(
+            "Protocol: unavailable\n{expected_lines}Measured at: {STARTED_AT}\n"
+        )));
+        assert!(!rendered.contains("Edge (informational): —"));
+        assert!(!rendered.contains("Edge (informational): ,"));
+        assert!(!rendered.contains("Network: ()"));
+    }
+}
+
+#[test]
+fn unavailable_and_disabled_metadata_have_distinct_text_output() {
+    let mut unavailable = RunResult::empty();
+    unavailable.started_at = STARTED_AT.to_owned();
+    unavailable.target.metadata_status = MetadataStatus::Unavailable;
+    let unavailable_text = render_text(&unavailable);
+
+    assert!(unavailable_text.contains("Metadata: unavailable\n"));
+    assert!(unavailable_text.contains(&format!("Measured at: {STARTED_AT}\n")));
+
+    let mut disabled = unavailable;
+    disabled.target.metadata_status = MetadataStatus::Disabled;
+    disabled.target.metadata = Some(NetworkMetadata {
+        public_ip: Some("192.0.2.1".to_owned()),
+        asn: Some(64_496),
+        as_organization: Some("Example Network".to_owned()),
+        edge: EdgeLocation {
+            colo: Some("XYZ".to_owned()),
+            ..EdgeLocation::default()
+        },
+        ..NetworkMetadata::default()
+    });
+    let disabled_text = render_text(&disabled);
+
+    assert!(!disabled_text.contains("Edge (informational):"));
+    assert!(!disabled_text.contains("Network:"));
+    assert!(!disabled_text.contains("Public IP:"));
+    assert!(!disabled_text.contains("Metadata:"));
+    assert!(disabled_text.contains(&format!("Measured at: {STARTED_AT}\n")));
 }
 
 #[test]

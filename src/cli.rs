@@ -31,6 +31,13 @@ pub struct Cli {
     #[arg(long)]
     pub no_loaded_latency: bool,
 
+    #[arg(
+        long,
+        help = "Skip the default public IP and network metadata request",
+        long_help = "Skip the default public IP and network metadata request.\n\nMetadata collection is enabled by default and includes the public IP, ASN, and approximate location already visible to Cloudflare. --no-metadata skips the request entirely and omits those metadata fields from output."
+    )]
+    pub no_metadata: bool,
+
     /// Per-request timeout
     #[arg(
         long,

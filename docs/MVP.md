@@ -14,6 +14,10 @@ The MVP prioritizes measurement correctness, transparent limitations, determinis
 ### Measurement engine
 
 - Requests to `https://speed.cloudflare.com/__down` and `https://speed.cloudflare.com/__up`.
+- Normalized same-origin `Referer` on latency/download GETs and normalized
+  `Referer` plus scheme-and-authority-only `Origin` on upload POSTs.
+- At most one transport attempt per scheduled measurement; HTTP failures are
+  not retried.
 - Cloudflare's published default measurement order for:
   - initial latency estimation;
   - initial 100 KB download estimation;
@@ -32,14 +36,22 @@ The MVP prioritizes measurement correctness, transparent limitations, determinis
 - 10 ms server-time fallback when no usable `Server-Timing` value exists.
 - Request and stream timeouts.
 - Ctrl+C cancellation.
+- One bounded `/meta` request after the complete timed plan, using the same
+  client and strict address-family policy without retries or pre-test warming.
 
 ### CLI
 
 - Plain line-oriented terminal output.
+- Individual request progress on stderr with phase/group counters, safe failure
+  categories, one adaptive-stop notice per direction, and an explicit
+  packet-loss-unavailable notice.
+- A bounded nonblocking progress channel that drops progress rather than
+  perturbing measurement timing when stderr is slow.
 - `--ipv4` and `--ipv6`.
 - `--json`.
 - `--no-download` and `--no-upload`.
 - `--no-loaded-latency`.
+- `--no-metadata`.
 - `--timeout`.
 - `--quiet`.
 - Standard help and version flags.
@@ -53,6 +65,10 @@ The MVP prioritizes measurement correctness, transparent limitations, determinis
 - Total test duration.
 - Payload bytes uploaded and downloaded.
 - Negotiated HTTP version when available.
+- Default Cloudflare-reported public IP, ASN, network organization, approximate
+  client location, and edge colo/location, with an explicit privacy opt-out.
+- One RFC 3339 UTC run-start timestamp and a Unix-millisecond completion
+  timestamp on every accepted raw point.
 - Packet loss represented as unavailable/null.
 
 ### Engineering
@@ -85,12 +101,19 @@ The MVP prioritizes measurement correctness, transparent limitations, determinis
 
 Packet loss remains in the upstream sequence for traceability but is skipped by the MVP runner with an explicit unsupported result.
 
+The optional `/meta` enrichment request is not a measurement-plan entry. When
+enabled (the default), it runs exactly once only after the 15 ordered plan
+entries have finished and all loaded probes have stopped. Its response bytes
+and elapsed time are excluded from download/upload usage and
+`usage.duration_ms`. `--no-metadata` omits it entirely.
+
 The default schedule is exposed as a versioned `MeasurementPlan` derived from
 a compile-time fixture. `MeasurementPlan::for_config` creates the run-specific
 view without mutating the baseline: disabled download or upload steps are
 removed, while latency and packet-loss metadata retain their source order. The
 default `RunConfig` uses automatic IP-family selection, enables both transfer
-directions and loaded latency, and applies a 30-second per-request timeout.
+directions, loaded latency, and post-plan metadata, and applies a 30-second
+per-request timeout.
 
 | Order | Type | Payload / packets | Count | MVP behavior |
 |---:|---|---:|---:|---|
@@ -142,7 +165,12 @@ Loaded probes run concurrently with eligible transfers, use a 400 ms throttle, a
 
 ### AC-7: JSON cleanliness
 
-`cfbench --json` writes one parseable JSON document to stdout. No progress lines are mixed into stdout.
+`cfbench --json` writes one parseable JSON document to stdout and suppresses all
+progress. Ordinary text mode uses the documented exact stderr lines;
+`--quiet` suppresses all progress but preserves final results and diagnostics.
+Schema version 1 remains one document with additive `started_at`,
+`metadata_status`, nullable `metadata`, and per-point
+`measured_at_unix_ms` fields.
 
 ### AC-8: IP family
 
@@ -155,6 +183,39 @@ A timeout or interrupted stream produces a stage-specific error and no panic. Co
 ### AC-10: disclosure
 
 Help text and README identify `cfbench` as unofficial and describe native/browser timing differences.
+
+### AC-11: large-request context
+
+The 100 MB download uses the same normalized request context as ordinary
+production GETs, receives a successful header status from Cloudflare when the
+endpoint is available, and can drop the response immediately without consuming
+the body. The ignored live guard protects the HTTP 403 regression observed on
+2026-07-19 and is not an ordinary CI gate.
+
+### AC-12: metadata privacy, ordering, and failure isolation
+
+A deterministic local test proves metadata collection defaults on, occurs once
+after the last plan operation, does not change plan usage or duration, and
+retains nullable leaves from a bounded valid object. `--no-metadata` performs
+zero metadata requests and serializes `metadata_status: "disabled"` with
+`metadata: null`. Enabled retrieval failure serializes `unavailable`, emits one
+redacted diagnostic, preserves completed points, and does not change a
+measurement-derived success or failure status.
+
+Cancellation during an active metadata request is different from ordinary
+metadata failure: it is terminal even when enrichment follows a measurement
+error. Completed points and the earlier failure remain in result history, and
+the metadata cancellation is appended as a failure rather than a diagnostic.
+
+Text tests cover complete, partial, unavailable, and disabled metadata without
+dangling punctuation. JSON raw points remain in latency/direction/loaded
+direction arrays; `requested_bytes` is the bandwidth group key rather than a
+duplicated grouped representation. Every accepted point has a nondecreasing
+completion timestamp that does not participate in reductions.
+
+An ignored live `/meta` guard checks only a nonempty public-IP field, a positive
+32-bit ASN, and a three-letter uppercase colo. It must not print or preserve the
+returned personal/network values in assertions or fixtures.
 
 ## Suggested implementation milestones
 

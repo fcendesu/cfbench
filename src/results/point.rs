@@ -12,6 +12,7 @@ pub struct LatencyPoint {
     pub ttfb_ms: f64,
     pub server_time_ms: f64,
     pub http_version: Option<String>,
+    pub measured_at_unix_ms: i64,
 }
 
 /// One finite native transfer observation.
@@ -27,6 +28,7 @@ pub struct BandwidthPoint {
     pub server_time_ms: f64,
     pub bps: u64,
     pub http_version: Option<String>,
+    pub measured_at_unix_ms: i64,
 }
 
 fn serialize_direction<S>(direction: &Direction, serializer: S) -> Result<S::Ok, S::Error>

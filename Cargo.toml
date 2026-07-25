@@ -13,9 +13,14 @@ categories = ["command-line-utilities", "network-programming"]
 bytes = "1.11"
 clap = { version = "4.5", features = ["derive"] }
 futures-util = "0.3"
+humantime = "2.4.0"
 reqwest = { version = "=0.13.4", default-features = false, features = ["http2", "rustls", "stream"] }
 serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
+# `arbitrary_precision` keeps values such as 1e400 syntactically valid until
+# tolerant metadata leaf conversion. `raw_value` lets the bounded metadata
+# decoder retain selected leaves while serde_json skips deep unknown values
+# with its iterative ignored-value scanner instead of building a recursive Value.
+serde_json = { version = "1.0", features = ["arbitrary_precision", "raw_value"] }
 thiserror = "2.0"
 tokio = { version = "1.49", features = ["io-util", "macros", "net", "rt-multi-thread", "signal", "time"] }
 tokio-util = { version = "0.7", features = ["rt"] }

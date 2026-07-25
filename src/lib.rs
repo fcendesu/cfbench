@@ -3,11 +3,13 @@
 pub mod app;
 pub mod cancellation;
 pub mod cli;
+pub mod clock;
 pub mod config;
 pub mod error;
 pub mod measurement;
 pub mod output;
 pub mod plan;
+pub mod progress;
 pub mod results;
 pub mod runner;
 pub mod statistics;

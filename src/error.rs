@@ -14,7 +14,14 @@ pub enum OutputError {
     Json(#[from] serde_json::Error),
 }
 
-/// Failures at a native HTTP measurement boundary.
+/// Structural failures while mapping a syntactically valid metadata document.
+#[derive(Debug, Error)]
+pub enum MetadataStructureError {
+    #[error("metadata response top level must be a JSON object")]
+    TopLevelNotObject,
+}
+
+/// Failures at a native HTTP transport boundary.
 #[derive(Debug, Error)]
 pub enum TransportError {
     #[error("measurement was cancelled")]
@@ -65,8 +72,26 @@ pub enum TransportError {
         expected: u64,
         actual: u64,
     },
+    #[error("metadata response body from endpoint {endpoint} exceeds {limit} bytes")]
+    MetadataBodyTooLarge { endpoint: String, limit: usize },
+    #[error("could not parse metadata JSON from endpoint {endpoint}: {source}")]
+    MetadataJson {
+        endpoint: String,
+        #[source]
+        source: serde_json::Error,
+    },
+    #[error("invalid metadata response from endpoint {endpoint}: {source}")]
+    MetadataStructure {
+        endpoint: String,
+        #[source]
+        source: MetadataStructureError,
+    },
+    #[error("metadata collection is not supported by this transport")]
+    MetadataUnsupported,
     #[error("invalid transport base URL: {0}")]
     InvalidBaseUrl(String),
+    #[error("could not construct a safe request context from the transport base URL")]
+    InvalidRequestContext,
     #[error("could not build HTTP client: {0}")]
     ClientBuild(#[source] reqwest::Error),
 }
@@ -82,7 +107,13 @@ impl TransportError {
             | Self::BodyStream { payload_bytes, .. } => *payload_bytes,
             Self::DownloadPayloadMismatch { actual, .. }
             | Self::UploadPayloadMismatch { actual, .. } => *actual,
-            Self::InvalidBaseUrl(_) | Self::ClientBuild(_) => 0,
+            Self::MetadataBodyTooLarge { .. }
+            | Self::MetadataJson { .. }
+            | Self::MetadataStructure { .. }
+            | Self::MetadataUnsupported
+            | Self::InvalidBaseUrl(_)
+            | Self::InvalidRequestContext
+            | Self::ClientBuild(_) => 0,
         }
     }
 

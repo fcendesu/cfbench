@@ -3,25 +3,32 @@ use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
-use reqwest::header::{ACCEPT_ENCODING, CONTENT_LENGTH, CONTENT_TYPE, HeaderMap, HeaderValue};
+use reqwest::header::{
+    ACCEPT_ENCODING, CONTENT_LENGTH, CONTENT_TYPE, HeaderMap, HeaderValue, ORIGIN, REFERER,
+};
 use reqwest::{Client, Response, Url, Version, redirect};
 use tokio_util::sync::CancellationToken;
 
 use crate::config::{IpMode, RunConfig};
 use crate::error::TransportError;
 use crate::measurement::TimingObservation;
+use crate::results::NetworkMetadata;
 
+use super::metadata::{MetadataDecodeError, metadata_from_slice};
 use super::server_timing::server_duration;
 use super::upload_body::stream_upload;
 
 const CLOUDFLARE_BASE_URL: &str = "https://speed.cloudflare.com";
 const SERVER_TIMING: &str = "server-timing";
+const MAX_METADATA_BODY_BYTES: usize = 65_536;
 
 /// Reqwest-backed transport shared by every measurement in one run.
 #[derive(Clone)]
 pub struct ReqwestTransport {
     client: Client,
     base_url: Url,
+    referer: HeaderValue,
+    origin: HeaderValue,
     request_timeout: Duration,
 }
 
@@ -35,12 +42,21 @@ impl ReqwestTransport {
         config: RunConfig,
         base_url: impl AsRef<str>,
     ) -> Result<Self, TransportError> {
-        let base_url = Url::parse(base_url.as_ref())
+        let mut base_url = Url::parse(base_url.as_ref())
             .map_err(|error| TransportError::InvalidBaseUrl(error.to_string()))?;
+        base_url
+            .set_username("")
+            .map_err(|_| TransportError::InvalidRequestContext)?;
+        base_url
+            .set_password(None)
+            .map_err(|_| TransportError::InvalidRequestContext)?;
+        let (referer, origin) = request_context(&base_url)?;
         let client = build_measurement_client(&config).map_err(TransportError::ClientBuild)?;
         Ok(Self {
             client,
             base_url,
+            referer,
+            origin,
             request_timeout: config.request_timeout,
         })
     }
@@ -52,26 +68,63 @@ impl ReqwestTransport {
         self.download(0, None, cancellation).await
     }
 
+    /// Fetches bounded post-measurement network metadata without creating a timing observation.
+    pub async fn metadata(
+        &self,
+        cancellation: &CancellationToken,
+    ) -> Result<NetworkMetadata, TransportError> {
+        let url = self.endpoint("meta")?;
+        let endpoint = redacted_endpoint(&url);
+        let request = self.client.get(url).header(REFERER, self.referer.clone());
+        let deadline = tokio::time::Instant::now() + self.request_timeout;
+        let mut response = self
+            .send_headers(request, &endpoint, deadline, cancellation)
+            .await?;
+        if !response.status().is_success() {
+            return Err(TransportError::HttpStatus {
+                endpoint,
+                status: response.status().as_u16(),
+                payload_bytes: 0,
+            });
+        }
+
+        let mut body = Vec::new();
+        while let Some(chunk) = self
+            .next_chunk(&mut response, &endpoint, deadline, 0, cancellation)
+            .await?
+        {
+            if chunk.len() > MAX_METADATA_BODY_BYTES - body.len() {
+                return Err(TransportError::MetadataBodyTooLarge {
+                    endpoint,
+                    limit: MAX_METADATA_BODY_BYTES,
+                });
+            }
+            body.extend_from_slice(&chunk);
+        }
+
+        metadata_from_slice(&body).map_err(|error| match error {
+            MetadataDecodeError::Json(source) => TransportError::MetadataJson {
+                endpoint: endpoint.clone(),
+                source,
+            },
+            MetadataDecodeError::Structure(source) => {
+                TransportError::MetadataStructure { endpoint, source }
+            }
+        })
+    }
+
     pub async fn download(
         &self,
         bytes: u64,
         during: Option<&str>,
         cancellation: &CancellationToken,
     ) -> Result<TimingObservation, TransportError> {
-        let mut url = self.endpoint("__down")?;
-        {
-            let mut query = url.query_pairs_mut();
-            query.append_pair("bytes", &bytes.to_string());
-            if let Some(during) = during {
-                query.append_pair("during", during);
-            }
-        }
-        let endpoint = redacted_endpoint(&url);
+        let (request, endpoint) = self.download_request(bytes, during)?;
 
         let started = Instant::now();
         let deadline = tokio::time::Instant::now() + self.request_timeout;
         let response = self
-            .send_headers(self.client.get(url), &endpoint, deadline, cancellation)
+            .send_headers(request, &endpoint, deadline, cancellation)
             .await?;
         let headers_received = started.elapsed();
         let (mut response, server_time, http_version, ip_family) =
@@ -135,6 +188,8 @@ impl ReqwestTransport {
             .post(url)
             .header(CONTENT_TYPE, "text/plain;charset=UTF-8")
             .header(CONTENT_LENGTH, content_length)
+            .header(REFERER, self.referer.clone())
+            .header(ORIGIN, self.origin.clone())
             .body(reqwest::Body::wrap_stream(stream));
 
         let started = Instant::now();
@@ -184,6 +239,24 @@ impl ReqwestTransport {
         self.base_url
             .join(path)
             .map_err(|error| TransportError::InvalidBaseUrl(error.to_string()))
+    }
+
+    fn download_request(
+        &self,
+        bytes: u64,
+        during: Option<&str>,
+    ) -> Result<(reqwest::RequestBuilder, String), TransportError> {
+        let mut url = self.endpoint("__down")?;
+        {
+            let mut query = url.query_pairs_mut();
+            query.append_pair("bytes", &bytes.to_string());
+            if let Some(during) = during {
+                query.append_pair("during", during);
+            }
+        }
+        let endpoint = redacted_endpoint(&url);
+        let request = self.client.get(url).header(REFERER, self.referer.clone());
+        Ok((request, endpoint))
     }
 
     async fn send_headers(
@@ -354,6 +427,25 @@ fn redacted_endpoint(url: &Url) -> String {
     endpoint.to_string()
 }
 
+fn request_context(base_url: &Url) -> Result<(HeaderValue, HeaderValue), TransportError> {
+    let mut referer = base_url.clone();
+    referer
+        .set_username("")
+        .map_err(|_| TransportError::InvalidRequestContext)?;
+    referer
+        .set_password(None)
+        .map_err(|_| TransportError::InvalidRequestContext)?;
+    referer.set_path("/");
+    referer.set_query(None);
+    referer.set_fragment(None);
+    let origin = referer.origin().ascii_serialization();
+    Ok((
+        HeaderValue::from_str(referer.as_str())
+            .map_err(|_| TransportError::InvalidRequestContext)?,
+        HeaderValue::from_str(&origin).map_err(|_| TransportError::InvalidRequestContext)?,
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use std::future;
@@ -362,6 +454,33 @@ mod tests {
     use tokio::sync::Notify;
 
     use super::*;
+
+    async fn probe_download_headers(
+        transport: &ReqwestTransport,
+        bytes: u64,
+    ) -> Result<reqwest::StatusCode, TransportError> {
+        let (request, endpoint) = transport.download_request(bytes, None)?;
+        let cancellation = CancellationToken::new();
+        let deadline = tokio::time::Instant::now() + transport.request_timeout;
+        let response = transport
+            .send_headers(request, &endpoint, deadline, &cancellation)
+            .await?;
+        let status = response.status();
+        drop(response);
+        Ok(status)
+    }
+
+    #[tokio::test]
+    #[ignore = "uses the live Cloudflare endpoint"]
+    async fn live_large_download_accepts_browser_request_context() {
+        let transport =
+            ReqwestTransport::new(RunConfig::default()).expect("build live Cloudflare transport");
+        let status = probe_download_headers(&transport, 100_000_000)
+            .await
+            .expect("Cloudflare large download endpoint returns response headers");
+
+        assert!(status.is_success());
+    }
 
     #[tokio::test]
     async fn cancellation_preempts_an_actively_polled_body_future() {
@@ -433,5 +552,23 @@ mod tests {
         let no_proxy_call = [".no_", "proxy()"].concat();
 
         assert_eq!(family_body.matches(&no_proxy_call).count(), 2);
+    }
+
+    #[test]
+    fn download_request_is_constructed_before_measurement_timing_starts() {
+        let source = include_str!("reqwest_transport.rs");
+        let download_body = source
+            .split_once("pub async fn download(")
+            .and_then(|(_, rest)| rest.split_once("\n    pub async fn upload("))
+            .map(|(body, _)| body)
+            .expect("locate download implementation");
+        let request_builder = download_body
+            .find("let (request, endpoint) = self.download_request(bytes, during)?;")
+            .expect("shared download request construction");
+        let started = download_body
+            .find("let started = Instant::now()")
+            .expect("download timing start");
+
+        assert!(request_builder < started);
     }
 }

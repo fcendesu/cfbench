@@ -127,6 +127,7 @@ pub enum MeasurementConversionError {
 /// Converts a transport observation into a validated latency point.
 pub fn latency_point(
     observation: TimingObservation,
+    measured_at_unix_ms: i64,
 ) -> Result<LatencyPoint, MeasurementConversionError> {
     validate_observation(&observation)?;
 
@@ -140,6 +141,7 @@ pub fn latency_point(
         ttfb_ms,
         server_time_ms,
         http_version: observation.http_version,
+        measured_at_unix_ms,
     })
 }
 
@@ -148,6 +150,7 @@ pub fn bandwidth_point(
     direction: Direction,
     requested_bytes: u64,
     observation: TimingObservation,
+    measured_at_unix_ms: i64,
 ) -> Result<BandwidthPoint, MeasurementConversionError> {
     validate_observation(&observation)?;
 
@@ -180,6 +183,7 @@ pub fn bandwidth_point(
         server_time_ms,
         bps: bps as u64,
         http_version: observation.http_version,
+        measured_at_unix_ms,
     })
 }
 

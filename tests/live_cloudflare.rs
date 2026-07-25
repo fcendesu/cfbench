@@ -45,3 +45,23 @@ async fn live_cloudflare_upload_succeeds_with_finite_timing() {
     assert!(observation.ttfb.as_secs_f64().is_finite());
     assert!(observation.total.as_secs_f64().is_finite());
 }
+
+#[tokio::test]
+#[ignore = "uses external network metadata"]
+async fn live_cloudflare_metadata_has_broad_public_shape() {
+    let metadata = live_transport()
+        .metadata(&CancellationToken::new())
+        .await
+        .expect("Cloudflare metadata endpoint responds");
+
+    assert!(
+        metadata
+            .public_ip
+            .as_deref()
+            .is_some_and(|value| !value.trim().is_empty())
+    );
+    assert!(metadata.asn.is_some_and(|asn| asn > 0));
+    assert!(metadata.edge.colo.as_deref().is_some_and(|colo| {
+        colo.len() == 3 && colo.bytes().all(|byte| byte.is_ascii_uppercase())
+    }));
+}

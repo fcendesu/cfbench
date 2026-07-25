@@ -23,19 +23,37 @@ Compatibility is divided into three levels:
 | Latency | GET | `https://speed.cloudflare.com/__down?bytes=0` |
 | Download | GET | `https://speed.cloudflare.com/__down?bytes=<N>` |
 | Upload | POST | `https://speed.cloudflare.com/__up` |
+| Result metadata | GET | `https://speed.cloudflare.com/meta` |
 
 Requirements:
 
 - Set `Accept-Encoding: identity` where possible to avoid content encoding changing measured bytes.
+- Send `Referer: https://speed.cloudflare.com/` on latency and download GETs.
+- Send the same `Referer` plus `Origin: https://speed.cloudflare.com` on upload
+  POSTs. Compatible fixture transports derive both values from their base URL.
+- Normalize request context before timing: `Referer` is the base URL with a
+  trailing slash; `Origin` contains only scheme and authority; neither includes
+  credentials, query, or fragment.
 - Consume download bodies completely unless cancelled or timed out.
 - Consume upload responses completely even when the response body is small.
 - Reuse a single configured client and connection pool for the run.
 - Do not add retries around a measurement point. A retry is a new measurement and must be explicitly scheduled if ever supported.
+- Fetch result metadata at most once after the timed measurement plan, never
+  before or concurrently with a measurement. Use the same client, timeout,
+  cancellation, strict address-family, redirect, proxy, decompression, Referer,
+  and no-retry policy, and bound the response body to 65,536 bytes.
 
 Reqwest `0.13.4` enables protocol-NACK retries by default (up to two retries in
 addition to the original request). The production client builder must override
 that behavior with `reqwest::retry::never()` so each scheduled measurement
 operation makes at most one underlying transport attempt.
+
+On 2026-07-19, a context-free 100 MB live GET returned HTTP 403 after the
+preceding groups had transferred 169 MB. Headers-only probes showed 403 without
+request context and 2xx with `Referer`, `Origin`, or both. Production GETs use
+the same-origin `Referer` observed for the browser context; this correction does
+not add a browser User-Agent, move the timing start, or retry the rejected
+request.
 
 ## 3. Exact default schedule
 
@@ -58,6 +76,12 @@ download      bytes=250000000    count=2
 ```
 
 The runner preserves this order. The packet-loss entry is skipped in the MVP but remains represented in plan metadata.
+
+The optional `/meta` request is post-plan result enrichment, not a sixteenth
+schedule entry. It starts only after every scheduled request and loaded probe
+has stopped. It therefore cannot warm or compete with measurement traffic and
+is excluded from plan payload accounting and duration. `--no-metadata` removes
+the request entirely without changing this schedule.
 
 The native baseline is encoded in `src/plan.rs` as a 15-entry compile-time
 fixture with the upstream version and commit stored alongside it. Runtime
@@ -86,6 +110,14 @@ in `tests/plan_compatibility.rs` compares every entry, including the initial
 ### 5.1 Monotonic clock
 
 All elapsed measurements must use `std::time::Instant`. Wall-clock timestamps may be included as metadata but must never be used to calculate latency or bandwidth.
+
+One adjacent `SystemTime`/`Instant` anchor is captured immediately before the
+first plan step. `started_at` is the UTC RFC 3339 form of that wall-clock
+anchor. Every accepted raw point receives `measured_at_unix_ms` from the same
+wall-clock anchor plus monotonic elapsed time. This makes point timestamps
+nondecreasing even if the system wall clock changes. Wall-clock metadata does
+not affect latency, bandwidth, jitter, percentiles, eligibility, loaded-point
+retention, finish state, timeouts, cancellation, or `usage.duration_ms`.
 
 ### 5.2 Native request timestamps
 
@@ -232,7 +264,47 @@ The MVP must not perform ICMP ping loss and label it as Cloudflare packet loss.
 
 Post-MVP implementation requires a separate design covering TURN credentials, UDP transport, batching, security, and cross-platform behavior.
 
-## 11. Network and protocol behavior
+## 11. Post-plan metadata and raw-result semantics
+
+Metadata collection is enabled by default and may be disabled with
+`--no-metadata`. The bounded `/meta` object supplies public client IP, unsigned
+32-bit ASN, network organization, approximate client location, and edge
+colo/location. All optional leaves are nullable, unknown upstream fields are
+ignored, and invalid or non-finite coordinates become null individually.
+Cloudflare is the only source; the MVP does not contact a third-party IP or ASN
+service.
+
+`target.metadata_status` has exact policy/error semantics:
+
+- `available`: one bounded valid top-level `/meta` JSON object was accepted,
+  even when optional leaves are null;
+- `unavailable`: collection was enabled but the HTTP request, body limit, JSON,
+  or top-level object validation failed;
+- `disabled`: `--no-metadata` caused zero metadata I/O.
+
+`target.metadata` is null for unavailable and disabled. Retrieval failure is
+nonfatal: it appends one redacted diagnostic, preserves measurement points and
+the measurement-derived process status, and does not fabricate latency or
+bandwidth data. Cancellation during post-plan enrichment remains cancellation;
+a run cancelled during measurements skips metadata. If active metadata is
+cancelled after a terminal measurement error, cancellation supersedes that
+error as the terminal outcome while the earlier failure and completed points
+remain in the serialized history. The metadata cancellation is appended to
+`failures`, not reduced to a diagnostic.
+
+Raw JSON keeps one measurement-ordered array for public unloaded latency, one
+array per bandwidth direction, and one latest-20 array per loaded-latency
+direction. `requested_bytes` on a bandwidth point is the canonical payload-size
+group key; points are not duplicated into a second grouped object. The initial
+one-packet latency estimate remains private orchestration state and is not
+serialized. Every successful serialized latency and bandwidth point carries
+its completion timestamp.
+
+Packet loss remains `unavailable`/null because TURN/WebRTC is not implemented,
+and Cloudflare AIM/network-quality scores remain absent. `/meta` must not be
+used to fabricate either excluded feature.
+
+## 12. Network and protocol behavior
 
 ### Client reuse
 
@@ -256,14 +328,32 @@ The upstream schedule already begins with latency and a bypassed 100 KB download
 
 Record the negotiated HTTP version for each point when available. A run may include more than one version after connection failures or re-establishment, so summary metadata may be `mixed`.
 
-## 12. Cache and compression
+### Progress reporting integrity
+
+Ordinary text mode reports accepted requests and stage status through stable
+stderr lines such as:
+
+```text
+[latency 1/20] 22.80 ms
+[download 100 KB 1/9] 91.42 Mbps — 11.0 ms
+[loaded/download 1] 25.40 ms
+[upload 1 MB 1/6] 328.09 Mbps — 24.5 ms
+```
+
+`--quiet` and `--json` suppress all progress; diagnostics remain on stderr and
+JSON stdout remains one document. Event sending uses bounded nonblocking
+`try_send`, so slow output may drop a display event but cannot block a request,
+drop a raw point, change usage, or affect reductions. Request builders and
+headers are completed before monotonic measurement timing begins.
+
+## 13. Cache and compression
 
 - Match upstream by using only the `bytes=<N>` query for ordinary measurements and adding `during=download` or `during=upload` for loaded probes; do not add a random cache-busting parameter.
 - Never allow an intermediary cache hit to produce a valid bandwidth point with zero transferred payload.
 - Disable transparent decompression for measurement requests.
 - Validate that the received download body count matches the requested size. A mismatch invalidates the point.
 
-## 13. Compatibility report
+## 14. Compatibility report
 
 Every release should maintain a table like this:
 
@@ -278,11 +368,12 @@ Every release should maintain a table like this:
 | Browser TTFB | Native equivalent | Side-by-side live runs |
 | Browser transferSize | Native payload approximation | Documented |
 | Loaded latency | Intended equivalent | Concurrency tests and live runs |
+| `/meta` enrichment | Informational, outside plan | Bounded local fixtures and ignored live shape guard |
 | Packet loss | Unsupported in MVP | Explicit null status |
 | HTTP/3 | Not required in MVP | Documented |
 | AIM scores | Unsupported in MVP | Explicit absence |
 
-## 14. Release validation
+## 15. Release validation
 
 Before publishing `0.1.0`:
 
@@ -300,12 +391,20 @@ It covers unloaded latency plus reducible download and upload points without
 adding a public endpoint override. The fixture rejects unknown request shapes,
 so the test also detects unexpected network activity.
 
-Ignored live tests use only a zero-byte latency probe, a 65,536-byte download,
-and a 65,536-byte upload. They assert endpoint and finite-timing invariants
-rather than speed values. They are excluded from ordinary CI because public
-network tests consume resources and are inherently variable.
+Ignored live tests use a zero-byte latency probe, a 65,536-byte download, and a
+65,536-byte upload. A separate 100,000,000-byte request-context regression guard
+waits only for successful response headers and drops the response without
+reading its body. The tests assert endpoint and finite-timing invariants rather
+than speed values. They are excluded from ordinary CI because public network
+tests depend on external service behavior and consume resources.
 
-## 15. Primary references
+A separate ignored `/meta` guard validates only that the public-IP field is
+nonempty, the ASN is positive and within the `u32` result type, and the colo is
+three uppercase ASCII letters. The test does not place returned public IP,
+network, or location values in assertion messages, committed fixtures, or
+successful test output.
+
+## 16. Primary references
 
 - <https://github.com/cloudflare/speedtest>
 - <https://github.com/cloudflare/speedtest/blob/main/README.md>

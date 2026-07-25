@@ -34,21 +34,49 @@ pub enum ResponsePlan {
     MultiServerTiming,
     EarlyUploadSuccess,
     UploadEcho,
+    Metadata {
+        status: u16,
+        body: Vec<u8>,
+        chunk_bytes: usize,
+        chunk_delay: Duration,
+    },
 }
 
 pub struct FixtureServer {
     address: SocketAddr,
     uploads: Arc<Mutex<Vec<UploadRequest>>>,
+    requests: Arc<Mutex<Vec<CapturedRequest>>>,
     reached_stall: Arc<Notify>,
     request_count: Arc<AtomicUsize>,
     unexpected_requests: Arc<AtomicUsize>,
+    response_chunk_count: Arc<AtomicUsize>,
     task: tokio::task::JoinHandle<()>,
+}
+
+#[derive(Clone)]
+struct FixtureState {
+    uploads: Arc<Mutex<Vec<UploadRequest>>>,
+    requests: Arc<Mutex<Vec<CapturedRequest>>>,
+    reached_stall: Arc<Notify>,
+    request_count: Arc<AtomicUsize>,
+    unexpected_requests: Arc<AtomicUsize>,
+    response_chunk_count: Arc<AtomicUsize>,
 }
 
 #[derive(Clone, Debug)]
 pub struct UploadRequest {
     pub body_bytes: usize,
     pub content_type: Option<String>,
+    pub accept_encoding: Option<String>,
+}
+
+#[derive(Clone, Debug)]
+pub struct CapturedRequest {
+    pub method: String,
+    pub path: String,
+    pub referer: Option<String>,
+    pub origin: Option<String>,
+    pub authorization: Option<String>,
     pub accept_encoding: Option<String>,
 }
 
@@ -63,42 +91,39 @@ impl FixtureServer {
             .expect("bind fixture");
         let address = listener.local_addr().expect("fixture address");
         let uploads = Arc::new(Mutex::new(Vec::new()));
-        let captured = uploads.clone();
+        let requests = Arc::new(Mutex::new(Vec::new()));
         let reached_stall = Arc::new(Notify::new());
-        let server_reached_stall = reached_stall.clone();
         let request_count = Arc::new(AtomicUsize::new(0));
-        let server_request_count = request_count.clone();
         let unexpected_requests = Arc::new(AtomicUsize::new(0));
-        let server_unexpected_requests = unexpected_requests.clone();
+        let response_chunk_count = Arc::new(AtomicUsize::new(0));
+        let state = FixtureState {
+            uploads: uploads.clone(),
+            requests: requests.clone(),
+            reached_stall: reached_stall.clone(),
+            request_count: request_count.clone(),
+            unexpected_requests: unexpected_requests.clone(),
+            response_chunk_count: response_chunk_count.clone(),
+        };
         let task = tokio::spawn(async move {
             loop {
                 let Ok((socket, _)) = listener.accept().await else {
                     break;
                 };
                 let plan = plan.clone();
-                let captured = captured.clone();
-                let reached_stall = server_reached_stall.clone();
-                let request_count = server_request_count.clone();
-                let unexpected_requests = server_unexpected_requests.clone();
+                let state = state.clone();
                 tokio::spawn(async move {
-                    let _ = serve(
-                        socket,
-                        plan,
-                        captured,
-                        reached_stall,
-                        request_count,
-                        unexpected_requests,
-                    )
-                    .await;
+                    let _ = serve(socket, plan, state).await;
                 });
             }
         });
         Self {
             address,
             uploads,
+            requests,
             reached_stall,
             request_count,
             unexpected_requests,
+            response_chunk_count,
             task,
         }
     }
@@ -107,8 +132,16 @@ impl FixtureServer {
         format!("http://{}", self.address)
     }
 
+    pub fn url_with_test_context(&self) -> String {
+        format!("http://user:secret@{}/?query=secret#fragment", self.address)
+    }
+
     pub async fn uploads(&self) -> Vec<UploadRequest> {
         self.uploads.lock().await.clone()
+    }
+
+    pub async fn requests(&self) -> Vec<CapturedRequest> {
+        self.requests.lock().await.clone()
     }
 
     pub async fn wait_until_stalled(&self) {
@@ -126,6 +159,10 @@ impl FixtureServer {
     pub fn request_count(&self) -> usize {
         self.request_count.load(Ordering::Relaxed)
     }
+
+    pub fn response_chunk_count(&self) -> usize {
+        self.response_chunk_count.load(Ordering::Relaxed)
+    }
 }
 
 impl Drop for FixtureServer {
@@ -134,36 +171,39 @@ impl Drop for FixtureServer {
     }
 }
 
-async fn serve(
-    mut socket: TcpStream,
-    plan: ResponsePlan,
-    uploads: Arc<Mutex<Vec<UploadRequest>>>,
-    reached_stall: Arc<Notify>,
-    request_count: Arc<AtomicUsize>,
-    unexpected_requests: Arc<AtomicUsize>,
-) -> io::Result<()> {
+async fn serve(mut socket: TcpStream, plan: ResponsePlan, state: FixtureState) -> io::Result<()> {
     let (headers, initial_body) = read_request(&mut socket).await?;
-    request_count.fetch_add(1, Ordering::Relaxed);
+    state.request_count.fetch_add(1, Ordering::Relaxed);
+    let request_line = headers.lines().next().unwrap_or_default();
+    let mut request_parts = request_line.split_whitespace();
+    state.requests.lock().await.push(CapturedRequest {
+        method: request_parts.next().unwrap_or_default().to_owned(),
+        path: request_parts.next().unwrap_or_default().to_owned(),
+        referer: header(&headers, "referer").map(ToOwned::to_owned),
+        origin: header(&headers, "origin").map(ToOwned::to_owned),
+        authorization: header(&headers, "authorization").map(ToOwned::to_owned),
+        accept_encoding: header(&headers, "accept-encoding").map(ToOwned::to_owned),
+    });
     match plan {
         ResponsePlan::CloudflareCompatible => {
             serve_cloudflare_compatible(
                 &mut socket,
                 &headers,
                 initial_body,
-                uploads,
-                unexpected_requests,
+                state.uploads.clone(),
+                state.unexpected_requests.clone(),
             )
             .await?;
         }
         ResponsePlan::DelayHeaders => {
-            reached_stall.notify_one();
+            state.reached_stall.notify_one();
             std::future::pending::<()>().await;
         }
         ResponsePlan::StallBody => {
             socket
                 .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 1\r\n\r\n")
                 .await?;
-            reached_stall.notify_one();
+            state.reached_stall.notify_one();
             std::future::pending::<()>().await;
         }
         ResponsePlan::StallUploadResponse => {
@@ -182,7 +222,7 @@ async fn serve(
             socket
                 .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 1\r\n\r\n")
                 .await?;
-            reached_stall.notify_one();
+            state.reached_stall.notify_one();
             std::future::pending::<()>().await;
         }
         ResponsePlan::Trickle {
@@ -196,7 +236,7 @@ async fn serve(
                 .await?;
             if chunks > 0 {
                 socket.write_all(&[0]).await?;
-                reached_stall.notify_one();
+                state.reached_stall.notify_one();
             }
             for _ in 1..chunks {
                 tokio::time::sleep(chunk_interval).await;
@@ -229,7 +269,7 @@ async fn serve(
                 }
                 body_bytes += read;
             }
-            uploads.lock().await.push(UploadRequest {
+            state.uploads.lock().await.push(UploadRequest {
                 body_bytes,
                 content_type: header(&headers, "content-type").map(ToOwned::to_owned),
                 accept_encoding: header(&headers, "accept-encoding").map(ToOwned::to_owned),
@@ -268,6 +308,26 @@ async fn serve(
                 let emitted = remaining.min(chunk.len());
                 socket.write_all(&chunk[..emitted]).await?;
                 remaining -= emitted;
+            }
+        }
+        ResponsePlan::Metadata {
+            status,
+            body,
+            chunk_bytes,
+            chunk_delay,
+        } => {
+            let reason = if status == 200 { "OK" } else { "Error" };
+            let response = format!(
+                "HTTP/1.1 {status} {reason}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                body.len()
+            );
+            socket.write_all(response.as_bytes()).await?;
+            for chunk in body.chunks(chunk_bytes.max(1)) {
+                if !chunk_delay.is_zero() {
+                    tokio::time::sleep(chunk_delay).await;
+                }
+                socket.write_all(chunk).await?;
+                state.response_chunk_count.fetch_add(1, Ordering::Relaxed);
             }
         }
     }
@@ -340,6 +400,21 @@ async fn serve_cloudflare_compatible(
                 b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nServer-Timing: cfRequestDuration;dur=0\r\nConnection: close\r\n\r\nOK",
             )
             .await?;
+        return Ok(());
+    }
+
+    if method == "GET" && target == "/meta" {
+        let body = br#"{"clientIp":"192.0.2.1","asn":64500,"asOrganization":"Fixture Network","country":"ZZ","city":"Test City","colo":{"iata":"TEST","cca2":"ZZ","city":"Test Edge"}}"#;
+        socket
+            .write_all(
+                format!(
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    body.len()
+                )
+                .as_bytes(),
+            )
+            .await?;
+        socket.write_all(body).await?;
         return Ok(());
     }
 

@@ -1,6 +1,7 @@
+use std::borrow::Cow;
 use std::fmt::Write;
 
-use crate::results::RunResult;
+use crate::results::{EdgeLocation, MetadataStatus, NetworkMetadata, RunResult};
 
 const UNAVAILABLE: &str = "unavailable";
 
@@ -12,6 +13,9 @@ pub fn render_text(result: &RunResult) -> String {
     let _ = writeln!(output, "cfbench {}", result.client.version);
     let _ = writeln!(output, "Target: Cloudflare edge");
     let _ = writeln!(output, "Protocol: {protocol}");
+    metadata_lines(&mut output, result);
+    let measured_at = nonempty(&result.started_at).unwrap_or(UNAVAILABLE);
+    let _ = writeln!(output, "Measured at: {measured_at}");
     output.push('\n');
     metric_line(
         &mut output,
@@ -69,6 +73,84 @@ pub fn render_text(result: &RunResult) -> String {
         finite_or_zero(result.usage.duration_ms) / 1_000.0
     );
     output
+}
+
+fn metadata_lines(output: &mut String, result: &RunResult) {
+    match result.target.metadata_status {
+        MetadataStatus::Available => {
+            if let Some(metadata) = result.target.metadata.as_ref() {
+                available_metadata_lines(output, metadata);
+            }
+        }
+        MetadataStatus::Unavailable => {
+            let _ = writeln!(output, "Metadata: {UNAVAILABLE}");
+        }
+        MetadataStatus::Disabled => {}
+    }
+}
+
+fn available_metadata_lines(output: &mut String, metadata: &NetworkMetadata) {
+    if let Some(edge) = edge_label(&metadata.edge) {
+        let edge = escape_metadata_controls(&edge);
+        let _ = writeln!(output, "Edge (informational): {edge}");
+    }
+    if let Some(network) = network_label(metadata) {
+        let network = escape_metadata_controls(&network);
+        let _ = writeln!(output, "Network: {network}");
+    }
+    if let Some(public_ip) = metadata.public_ip.as_deref().and_then(nonempty) {
+        let public_ip = escape_metadata_controls(public_ip);
+        let _ = writeln!(output, "Public IP: {public_ip}");
+    }
+}
+
+fn escape_metadata_controls(value: &str) -> Cow<'_, str> {
+    if !value.chars().any(char::is_control) {
+        return Cow::Borrowed(value);
+    }
+
+    let mut escaped = String::with_capacity(value.len());
+    for character in value.chars() {
+        if character.is_control() {
+            escaped.extend(character.escape_default());
+        } else {
+            escaped.push(character);
+        }
+    }
+    Cow::Owned(escaped)
+}
+
+fn edge_label(edge: &EdgeLocation) -> Option<String> {
+    let colo = edge.colo.as_deref().and_then(nonempty);
+    let city = edge.city.as_deref().and_then(nonempty);
+    let country = edge.country_code.as_deref().and_then(nonempty);
+    let locality = join_components(city, country, ", ");
+
+    join_components(colo, locality.as_deref(), " — ")
+}
+
+fn network_label(metadata: &NetworkMetadata) -> Option<String> {
+    let organization = metadata.as_organization.as_deref().and_then(nonempty);
+    let asn = metadata.asn.map(|asn| format!("AS{asn}"));
+
+    match (organization, asn) {
+        (Some(organization), Some(asn)) => Some(format!("{organization} ({asn})")),
+        (Some(organization), None) => Some(organization.to_owned()),
+        (None, Some(asn)) => Some(asn),
+        (None, None) => None,
+    }
+}
+
+fn join_components(left: Option<&str>, right: Option<&str>, separator: &str) -> Option<String> {
+    match (left, right) {
+        (Some(left), Some(right)) => Some(format!("{left}{separator}{right}")),
+        (Some(component), None) | (None, Some(component)) => Some(component.to_owned()),
+        (None, None) => None,
+    }
+}
+
+fn nonempty(value: &str) -> Option<&str> {
+    (!value.trim().is_empty()).then_some(value)
 }
 
 fn protocol(result: &RunResult) -> String {
