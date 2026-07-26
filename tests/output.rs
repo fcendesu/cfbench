@@ -22,7 +22,9 @@ fn empty_text_result_uses_stable_labels_and_unavailable_values() {
     assert_eq!(
         rendered,
         concat!(
-            "cfbench 0.1.0\n",
+            "cfbench ",
+            env!("CARGO_PKG_VERSION"),
+            "\n",
             "Target: Cloudflare edge\n",
             "Protocol: unavailable\n",
             "Metadata: unavailable\n",
