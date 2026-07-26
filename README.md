@@ -4,24 +4,25 @@
 
 `cfbench` is unofficial and is not affiliated with, endorsed by, or supported by Cloudflare.
 
-## Install
+## Install (Linux x86_64)
 
-Linux x86_64 releases provide a Debian package, RPM package, and a standalone binary. The installer downloads the standalone binary and verifies its published SHA-256 checksum before installing it to `~/.local/bin`:
+For Debian/Ubuntu it installs the verified `.deb`; for Fedora/RHEL-family systems it installs the verified `.rpm`. It asks for your password only when the package manager needs `sudo`. Other supported Linux distributions receive the verified standalone binary in `~/.local/bin`.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/fcendesu/cfbench/main/scripts/install.sh | sh
 ```
 
-Install a specific version or choose a directory:
+To pin a release:
 
 ```bash
-CFBENCH_VERSION=0.1.0 curl -fsSL https://raw.githubusercontent.com/fcendesu/cfbench/main/scripts/install.sh | sh
-curl -fsSL https://raw.githubusercontent.com/fcendesu/cfbench/main/scripts/install.sh | sudo env CFBENCH_INSTALL_DIR=/usr/local/bin sh
+curl -fsSL https://raw.githubusercontent.com/fcendesu/cfbench/main/scripts/install.sh | CFBENCH_VERSION=0.1.0 sh
 ```
 
-For a package-manager install, download the `.deb` or `.rpm` from the matching [GitHub Release](https://github.com/fcendesu/cfbench/releases), verify it against the release checksum file, then install it with your distribution's package manager.
+Manual package downloads are also available from [GitHub Releases](https://github.com/fcendesu/cfbench/releases).
 
-To install from source, Rust 1.95 or newer is required:
+### Build from source
+
+Rust 1.95 or newer is required:
 
 ```bash
 git clone https://github.com/fcendesu/cfbench.git
