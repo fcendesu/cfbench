@@ -81,6 +81,10 @@ run_privileged() {
 case "$package_type" in
     deb)
         command -v apt-get >/dev/null 2>&1 || fail "apt-get is required to install the Debian package"
+        # APT drops privileges to the _apt user while reading local packages.
+        # The artifact has already passed checksum verification at this point.
+        chmod 755 "$tmp_dir"
+        chmod 644 "$tmp_dir/$artifact"
         printf 'Installing %s...\n' "$artifact" >&2
         run_privileged apt-get install -y "$tmp_dir/$artifact"
         printf 'Installed cfbench %s using the Debian package.\n' "$version"
