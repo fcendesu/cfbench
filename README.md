@@ -6,19 +6,11 @@
 
 ## Install (Linux x86_64)
 
-For Debian/Ubuntu it installs the verified `.deb`; for Fedora/RHEL-family systems it installs the verified `.rpm`. It asks for your password only when the package manager needs `sudo`. Other supported Linux distributions receive the verified standalone binary in `~/.local/bin`.
+### Bash installer for `.deb` and `.rpm`
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/fcendesu/cfbench/main/scripts/install.sh | sh
 ```
-
-To pin a release:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/fcendesu/cfbench/main/scripts/install.sh | CFBENCH_VERSION=0.1.1 sh
-```
-
-Manual package downloads are also available from [GitHub Releases](https://github.com/fcendesu/cfbench/releases).
 
 ### Build from source
 
