@@ -56,6 +56,11 @@ cat > "$mock_bin/dnf" <<'EOF'
 exit 0
 EOF
 
+cat > "$mock_bin/chmod" <<'EOF'
+#!/usr/bin/env sh
+printf 'chmod %s\n' "$*" >> "$CFBENCH_TEST_LOG"
+EOF
+
 cat > "$mock_bin/mktemp" <<'EOF'
 #!/usr/bin/env sh
 mkdir -p "$TMPDIR/work"
@@ -94,6 +99,11 @@ run_case() {
     assert_contains "Downloading cfbench v0.1.0 ($artifact)..." "$status"
     assert_contains "Verifying $artifact..." "$status"
     assert_contains "Installing $artifact..." "$status"
+
+    if [ "$os_id" = ubuntu ]; then
+        assert_contains "chmod 755 $test_root/ubuntu-tmp/work" "$log"
+        assert_contains "chmod 644 $test_root/ubuntu-tmp/work/$artifact" "$log"
+    fi
 }
 
 run_case ubuntu cfbench_0.1.0-1_amd64.deb "apt-get install -y $test_root/ubuntu-tmp/work/cfbench_0.1.0-1_amd64.deb"
