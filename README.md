@@ -12,6 +12,8 @@
 curl -fsSL https://raw.githubusercontent.com/fcendesu/cfbench/main/scripts/install.sh | sh
 ```
 
+[View the installer script](scripts/install.sh) before running it.
+
 ### Build from source
 
 Rust 1.95 or newer is required:
