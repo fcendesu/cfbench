@@ -1,10 +1,11 @@
 #!/usr/bin/env sh
-# Install a verified cfbench Linux x86_64 release artifact without requiring root.
+# Install a verified cfbench Linux x86_64 release artifact.
 set -eu
 
 repository=${CFBENCH_REPOSITORY:-fcendesu/cfbench}
 version=${CFBENCH_VERSION:-latest}
 install_dir=${CFBENCH_INSTALL_DIR:-$HOME/.local/bin}
+os_release=${CFBENCH_OS_RELEASE:-/etc/os-release}
 
 fail() {
     printf '%s\n' "cfbench installer: $*" >&2
@@ -12,7 +13,6 @@ fail() {
 }
 
 command -v curl >/dev/null 2>&1 || fail "curl is required"
-command -v tar >/dev/null 2>&1 || fail "tar is required"
 command -v sha256sum >/dev/null 2>&1 || command -v shasum >/dev/null 2>&1 || fail "sha256sum or shasum is required"
 
 [ "$(uname -s)" = "Linux" ] || fail "only Linux is supported by this installer; use cargo install --path . on other platforms"
@@ -30,7 +30,23 @@ case "$version" in
     *) version="v$version" ;;
 esac
 
-artifact="cfbench-${version}-x86_64-unknown-linux-gnu.tar.gz"
+package_type=standalone
+if [ -r "$os_release" ]; then
+    # shellcheck disable=SC1090
+    . "$os_release"
+    distribution_ids="${ID:-} ${ID_LIKE:-}"
+    case " $distribution_ids " in
+        *" debian "*|*" ubuntu "*) package_type=deb ;;
+        *" fedora "*|*" rhel "*|*" centos "*) package_type=rpm ;;
+    esac
+fi
+
+release_version=${version#v}
+case "$package_type" in
+    deb) artifact="cfbench_${release_version}-1_amd64.deb" ;;
+    rpm) artifact="cfbench-${release_version}-1.x86_64.rpm" ;;
+    *) artifact="cfbench-${version}-x86_64-unknown-linux-gnu.tar.gz" ;;
+esac
 checksum_file="cfbench-${version}-SHA256SUMS.txt"
 base_url="https://github.com/$repository/releases/download/$version"
 tmp_dir=$(mktemp -d "${TMPDIR:-/tmp}/cfbench-install.XXXXXX")
@@ -50,12 +66,37 @@ else
 fi
 [ "$actual" = "$expected" ] || fail "checksum verification failed"
 
-tar -xzf "$tmp_dir/$artifact" -C "$tmp_dir" cfbench
-mkdir -p "$install_dir"
-install -m 0755 "$tmp_dir/cfbench" "$install_dir/cfbench"
+run_privileged() {
+    if [ "$(id -u)" -eq 0 ]; then
+        "$@"
+        return
+    fi
 
-printf 'Installed cfbench %s to %s/cfbench\n' "$version" "$install_dir"
-case ":$PATH:" in
-    *":$install_dir:"*) ;;
-    *) printf 'Add %s to PATH to run cfbench directly.\n' "$install_dir" ;;
+    command -v sudo >/dev/null 2>&1 || fail "sudo is required to install a system package"
+    sudo "$@"
+}
+
+case "$package_type" in
+    deb)
+        command -v apt-get >/dev/null 2>&1 || fail "apt-get is required to install the Debian package"
+        run_privileged apt-get install -y "$tmp_dir/$artifact"
+        printf 'Installed cfbench %s using the Debian package.\n' "$version"
+        ;;
+    rpm)
+        command -v dnf >/dev/null 2>&1 || fail "dnf is required to install the RPM package"
+        run_privileged dnf install -y "$tmp_dir/$artifact"
+        printf 'Installed cfbench %s using the RPM package.\n' "$version"
+        ;;
+    *)
+        command -v tar >/dev/null 2>&1 || fail "tar is required for the standalone binary"
+        tar -xzf "$tmp_dir/$artifact" -C "$tmp_dir" cfbench
+        mkdir -p "$install_dir"
+        install -m 0755 "$tmp_dir/cfbench" "$install_dir/cfbench"
+
+        printf 'Installed cfbench %s to %s/cfbench\n' "$version" "$install_dir"
+        case ":$PATH:" in
+            *":$install_dir:"*) ;;
+            *) printf 'Add %s to PATH to run cfbench directly.\n' "$install_dir" ;;
+        esac
+        ;;
 esac

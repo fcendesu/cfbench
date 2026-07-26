@@ -19,6 +19,9 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+      - name: Test installer routing
+        if: runner.os == 'Linux'
+        run: sh tests/install_script.sh
       - name: Install Rust
         uses: dtolnay/rust-toolchain@master
         with:
