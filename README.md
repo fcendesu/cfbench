@@ -44,6 +44,37 @@ cfbench --quiet --timeout 60
 
 Run `cfbench --help` for the complete option list. Progress and diagnostics use stderr. `--json` writes exactly one schema-v1 JSON document to stdout and suppresses progress; `--quiet` also suppresses progress.
 
+### Example output
+
+The values below are illustrative and will vary by connection. `--no-metadata` keeps public IP, network, and edge-location information out of the result.
+
+```text
+$ cfbench --no-metadata
+Testing against Cloudflare edge...
+[latency 1/1] 18.42 ms
+[download 100 KB 1/1] 71.25 Mbps — 11.2 ms
+...
+
+cfbench 0.1.1
+Target: Cloudflare edge
+Protocol: IPv6 / HTTP/1.1
+Metadata: disabled
+Measured at: 2026-07-26T12:00:00.000Z
+
+Idle latency: 17.86 ms
+Idle jitter: 1.44 ms
+Download: 742.18 Mbps
+Download latency: 29.73 ms
+Download jitter: 4.10 ms
+Upload: 216.94 Mbps
+Upload latency: 47.81 ms
+Upload jitter: 7.62 ms
+
+Downloaded: 469.0 MB
+Uploaded: 296.8 MB
+Duration: 24.18 s
+```
+
 ## What it measures
 
 - Idle latency and jitter
