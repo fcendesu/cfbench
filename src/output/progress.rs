@@ -58,9 +58,6 @@ pub fn render_progress(event: &ProgressEvent) -> String {
             "[{}] larger payload groups skipped — request duration threshold reached",
             direction_name(*direction)
         ),
-        ProgressEvent::PacketLossUnavailable => {
-            "[packet loss] unavailable — TURN not configured".to_owned()
-        }
     }
 }
 

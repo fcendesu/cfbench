@@ -20,7 +20,7 @@ fn parses_cloudflare_server_duration() {
 
 #[test]
 fn falls_back_for_missing_malformed_and_non_finite_values() {
-    let fallback = Duration::from_millis(10);
+    let fallback = Duration::ZERO;
     assert_eq!(server_duration(None), fallback);
     assert_eq!(server_duration(Some("cfRequestDuration;dur=NaN")), fallback);
     assert_eq!(server_duration(Some("cfRequestDuration;dur=-1")), fallback);

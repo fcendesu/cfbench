@@ -55,7 +55,6 @@ pub fn render_text(result: &RunResult) -> String {
         result.summary.upload_loaded_jitter_ms,
         "ms",
     );
-    let _ = writeln!(output, "Packet loss: {UNAVAILABLE}");
     output.push('\n');
     let _ = writeln!(
         output,

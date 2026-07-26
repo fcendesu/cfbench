@@ -37,8 +37,6 @@ pub enum ProgressEvent {
     },
     /// A direction's later payload groups were skipped after adaptive stopping.
     DirectionFinished { direction: Direction },
-    /// The unsupported packet-loss stage was reached.
-    PacketLossUnavailable,
 }
 
 /// The measurement stage that produced a request failure.

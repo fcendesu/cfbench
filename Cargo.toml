@@ -9,6 +9,30 @@ repository = "https://github.com/fcendesu/cfbench"
 keywords = ["cloudflare", "network", "speedtest", "cli"]
 categories = ["command-line-utilities", "network-programming"]
 
+[package.metadata.deb]
+maintainer = "cfbench contributors"
+copyright = "2026, cfbench contributors"
+license-file = ["LICENSE", "0"]
+extended-description = "A native command-line speed test against Cloudflare's speed-test endpoints."
+depends = "$auto"
+section = "net"
+priority = "optional"
+assets = [
+    ["target/release/cfbench", "usr/bin/", "755"],
+    ["README.md", "usr/share/doc/cfbench/README.md", "644"],
+    ["CHANGELOG.md", "usr/share/doc/cfbench/changelog", "644"],
+]
+
+[package.metadata.generate-rpm]
+assets = [
+    { source = "target/release/cfbench", dest = "/usr/bin/cfbench", mode = "755" },
+    { source = "README.md", dest = "/usr/share/doc/cfbench/README.md", mode = "644", doc = true },
+    { source = "CHANGELOG.md", dest = "/usr/share/doc/cfbench/CHANGELOG.md", mode = "644", doc = true },
+    { source = "LICENSE", dest = "/usr/share/licenses/cfbench/LICENSE", mode = "644", doc = true },
+]
+license = "MIT"
+release = "1"
+
 [dependencies]
 bytes = "1.11"
 clap = { version = "4.5", features = ["derive"] }

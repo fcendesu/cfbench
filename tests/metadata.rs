@@ -52,44 +52,50 @@ fn metadata_with_deep_unknown(depth: usize) -> Vec<u8> {
 #[test]
 fn maps_cloudflare_meta_and_rejects_only_invalid_leaves() {
     let metadata = metadata_from_value(json!({
-        "clientIp": "2a02:ff0::1",
-        "asn": 12735,
-        "asOrganization": "TurkNet",
-        "country": "TR",
-        "city": "Istanbul",
-        "region": "Istanbul",
-        "postalCode": "34096",
-        "latitude": "41.01384",
+        "clientIp": "2001:db8::1",
+        "asn": 64496,
+        "asOrganization": "Example Network",
+        "country": "ZZ",
+        "city": "Example City",
+        "region": "Example Region",
+        "postalCode": "00000",
+        "latitude": "12.5",
         "longitude": {},
         "unknown": true,
         "colo": {
-            "iata": "IST",
-            "lat": 41.262222,
+            "iata": "XYZ",
+            "lat": 1.25,
             "lon": "NaN",
-            "cca2": "TR",
-            "region": "Europe",
-            "city": "Arnavutkoy"
+            "cca2": "ZZ",
+            "region": "Example Region",
+            "city": "Example Edge"
         }
     }))
     .unwrap();
 
-    assert_eq!(metadata.public_ip.as_deref(), Some("2a02:ff0::1"));
-    assert_eq!(metadata.asn, Some(12735));
-    assert_eq!(metadata.as_organization.as_deref(), Some("TurkNet"));
-    assert_eq!(metadata.client_location.country_code.as_deref(), Some("TR"));
-    assert_eq!(metadata.client_location.city.as_deref(), Some("Istanbul"));
-    assert_eq!(metadata.client_location.region.as_deref(), Some("Istanbul"));
+    assert_eq!(metadata.public_ip.as_deref(), Some("2001:db8::1"));
+    assert_eq!(metadata.asn, Some(64496));
+    assert_eq!(metadata.as_organization.as_deref(), Some("Example Network"));
+    assert_eq!(metadata.client_location.country_code.as_deref(), Some("ZZ"));
+    assert_eq!(
+        metadata.client_location.city.as_deref(),
+        Some("Example City")
+    );
+    assert_eq!(
+        metadata.client_location.region.as_deref(),
+        Some("Example Region")
+    );
     assert_eq!(
         metadata.client_location.postal_code.as_deref(),
-        Some("34096")
+        Some("00000")
     );
-    assert_eq!(metadata.client_location.latitude, Some(41.01384));
+    assert_eq!(metadata.client_location.latitude, Some(12.5));
     assert_eq!(metadata.client_location.longitude, None);
-    assert_eq!(metadata.edge.colo.as_deref(), Some("IST"));
-    assert_eq!(metadata.edge.country_code.as_deref(), Some("TR"));
-    assert_eq!(metadata.edge.region.as_deref(), Some("Europe"));
-    assert_eq!(metadata.edge.city.as_deref(), Some("Arnavutkoy"));
-    assert_eq!(metadata.edge.latitude, Some(41.262222));
+    assert_eq!(metadata.edge.colo.as_deref(), Some("XYZ"));
+    assert_eq!(metadata.edge.country_code.as_deref(), Some("ZZ"));
+    assert_eq!(metadata.edge.region.as_deref(), Some("Example Region"));
+    assert_eq!(metadata.edge.city.as_deref(), Some("Example Edge"));
+    assert_eq!(metadata.edge.latitude, Some(1.25));
     assert_eq!(metadata.edge.longitude, None);
 }
 
@@ -159,9 +165,9 @@ fn non_object_metadata_is_a_typed_structural_error() {
 #[tokio::test]
 async fn fetches_chunked_metadata_with_referer_only_and_identity_encoding() {
     let body = serde_json::to_vec(&json!({
-        "clientIp": "2a02:ff0::1",
-        "asn": 12735,
-        "colo": { "iata": "IST" }
+        "clientIp": "2001:db8::1",
+        "asn": 64496,
+        "colo": { "iata": "XYZ" }
     }))
     .unwrap();
     let fixture = FixtureServer::start(ResponsePlan::Metadata {
@@ -180,9 +186,9 @@ async fn fetches_chunked_metadata_with_referer_only_and_identity_encoding() {
         .await
         .expect("bounded metadata response");
 
-    assert_eq!(metadata.public_ip.as_deref(), Some("2a02:ff0::1"));
-    assert_eq!(metadata.asn, Some(12735));
-    assert_eq!(metadata.edge.colo.as_deref(), Some("IST"));
+    assert_eq!(metadata.public_ip.as_deref(), Some("2001:db8::1"));
+    assert_eq!(metadata.asn, Some(64496));
+    assert_eq!(metadata.edge.colo.as_deref(), Some("XYZ"));
     let requests = fixture.requests().await;
     assert_eq!(requests.len(), 1);
     assert_eq!(requests[0].method, "GET");
@@ -260,7 +266,7 @@ async fn metadata_ignores_unknown_value_beyond_serde_jsons_default_depth() {
 #[tokio::test]
 async fn metadata_ignores_deep_wrong_coordinate_leaves_and_keeps_valid_siblings() {
     let body = format!(
-        r#"{{"clientIp":"192.0.2.1","latitude":{},"city":"Istanbul","colo":{{"iata":"IST","lat":{},"city":"Arnavutkoy"}}}}"#,
+        r#"{{"clientIp":"192.0.2.1","latitude":{},"city":"Example City","colo":{{"iata":"XYZ","lat":{},"city":"Example Edge"}}}}"#,
         deeply_nested_value(160),
         deeply_nested_value(192),
     )
@@ -279,10 +285,13 @@ async fn metadata_ignores_deep_wrong_coordinate_leaves_and_keeps_valid_siblings(
         .expect("deep wrong optional leaves do not discard valid siblings");
 
     assert_eq!(metadata.public_ip.as_deref(), Some("192.0.2.1"));
-    assert_eq!(metadata.client_location.city.as_deref(), Some("Istanbul"));
+    assert_eq!(
+        metadata.client_location.city.as_deref(),
+        Some("Example City")
+    );
     assert_eq!(metadata.client_location.latitude, None);
-    assert_eq!(metadata.edge.colo.as_deref(), Some("IST"));
-    assert_eq!(metadata.edge.city.as_deref(), Some("Arnavutkoy"));
+    assert_eq!(metadata.edge.colo.as_deref(), Some("XYZ"));
+    assert_eq!(metadata.edge.city.as_deref(), Some("Example Edge"));
     assert_eq!(metadata.edge.latitude, None);
     assert_eq!(fixture.request_count(), 1);
     assert!(fixture.response_chunk_count() > 1);

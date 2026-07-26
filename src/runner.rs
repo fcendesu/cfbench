@@ -309,10 +309,7 @@ where
                         Err(error) => Some(error),
                     }
                 }
-                MeasurementStep::PacketLossUnsupported { .. } => {
-                    progress.emit(ProgressEvent::PacketLossUnavailable);
-                    None
-                }
+                MeasurementStep::PacketLossUnsupported { .. } => None,
                 MeasurementStep::Download { .. } => {
                     if !download_finish_reported {
                         progress.emit(ProgressEvent::DirectionFinished {

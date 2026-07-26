@@ -36,7 +36,6 @@ fn empty_text_result_uses_stable_labels_and_unavailable_values() {
             "Upload: unavailable\n",
             "Upload latency: unavailable\n",
             "Upload jitter: unavailable\n",
-            "Packet loss: unavailable\n",
             "\n",
             "Downloaded: 0.0 MB\n",
             "Uploaded: 0.0 MB\n",
@@ -52,13 +51,13 @@ fn metadata_text_renders_complete_values_between_protocol_and_metrics() {
     result.started_at = STARTED_AT.to_owned();
     result.target.metadata_status = MetadataStatus::Available;
     result.target.metadata = Some(NetworkMetadata {
-        public_ip: Some("2a02:ff0::1".to_owned()),
-        asn: Some(12_735),
-        as_organization: Some("TurkNet Iletisim Hizmetleri A.S.".to_owned()),
+        public_ip: Some("2001:db8::1".to_owned()),
+        asn: Some(64_496),
+        as_organization: Some("Example Network".to_owned()),
         edge: EdgeLocation {
-            colo: Some("IST".to_owned()),
-            city: Some("Arnavutkoy".to_owned()),
-            country_code: Some("TR".to_owned()),
+            colo: Some("XYZ".to_owned()),
+            city: Some("Example City".to_owned()),
+            country_code: Some("ZZ".to_owned()),
             ..EdgeLocation::default()
         },
         ..NetworkMetadata::default()
@@ -68,9 +67,9 @@ fn metadata_text_renders_complete_values_between_protocol_and_metrics() {
 
     assert!(rendered.contains(concat!(
         "Protocol: unavailable\n",
-        "Edge (informational): IST — Arnavutkoy, TR\n",
-        "Network: TurkNet Iletisim Hizmetleri A.S. (AS12735)\n",
-        "Public IP: 2a02:ff0::1\n",
+        "Edge (informational): XYZ — Example City, ZZ\n",
+        "Network: Example Network (AS64496)\n",
+        "Public IP: 2001:db8::1\n",
         "Measured at: 2026-07-19T09:02:59.123Z\n",
         "\n",
         "Idle latency: unavailable\n",
@@ -111,7 +110,7 @@ fn metadata_text_escapes_remote_control_characters_without_changing_json() {
     assert!(rendered.contains("\\nInjected edge"));
     assert!(rendered.contains("\\rInjected network"));
     assert!(rendered.contains("\\u{1b}[2J\\nInjected IP"));
-    assert_eq!(rendered.matches('\n').count(), 21);
+    assert_eq!(rendered.matches('\n').count(), 20);
     assert!(
         rendered
             .chars()
@@ -129,22 +128,22 @@ fn partial_metadata_text_omits_missing_components_without_dangling_punctuation()
     let cases = [
         (
             EdgeLocation {
-                colo: Some("IST".to_owned()),
-                country_code: Some("TR".to_owned()),
+                colo: Some("XYZ".to_owned()),
+                country_code: Some("ZZ".to_owned()),
                 ..EdgeLocation::default()
             },
             None,
-            Some(12_735),
-            "Edge (informational): IST — TR\nNetwork: AS12735\n",
+            Some(64_496),
+            "Edge (informational): XYZ — ZZ\nNetwork: AS64496\n",
         ),
         (
             EdgeLocation {
-                city: Some("Arnavutkoy".to_owned()),
+                city: Some("Example City".to_owned()),
                 ..EdgeLocation::default()
             },
-            Some("TurkNet"),
+            Some("Example Network"),
             None,
-            "Edge (informational): Arnavutkoy\nNetwork: TurkNet\n",
+            "Edge (informational): Example City\nNetwork: Example Network\n",
         ),
         (EdgeLocation::default(), None, None, ""),
     ];

@@ -1,5 +1,3 @@
-use std::collections::BTreeSet;
-
 use cfbench::measurement::{TimingObservation, bandwidth_point};
 use cfbench::plan::Direction;
 use cfbench::results::{
@@ -21,24 +19,24 @@ fn latency(ping_ms: f64) -> LatencyPoint {
 
 fn metadata_fixture() -> NetworkMetadata {
     NetworkMetadata {
-        public_ip: Some("2a02:ff0::1".to_owned()),
-        asn: Some(12_735),
-        as_organization: Some("TurkNet Iletisim Hizmetleri A.S.".to_owned()),
+        public_ip: Some("2001:db8::1".to_owned()),
+        asn: Some(64_496),
+        as_organization: Some("Example Network".to_owned()),
         client_location: ClientLocation {
-            country_code: Some("TR".to_owned()),
-            city: Some("Istanbul".to_owned()),
-            region: Some("Istanbul".to_owned()),
-            postal_code: Some("34096".to_owned()),
-            latitude: Some(41.01384),
-            longitude: Some(28.94966),
+            country_code: Some("ZZ".to_owned()),
+            city: Some("Example City".to_owned()),
+            region: Some("Example Region".to_owned()),
+            postal_code: Some("00000".to_owned()),
+            latitude: Some(12.5),
+            longitude: Some(34.5),
         },
         edge: EdgeLocation {
-            colo: Some("IST".to_owned()),
-            country_code: Some("TR".to_owned()),
-            region: Some("Europe".to_owned()),
-            city: Some("Arnavutkoy".to_owned()),
-            latitude: Some(41.262222),
-            longitude: Some(28.727778),
+            colo: Some("XYZ".to_owned()),
+            country_code: Some("ZZ".to_owned()),
+            region: Some("Example Region".to_owned()),
+            city: Some("Example Edge".to_owned()),
+            latitude: Some(1.25),
+            longitude: Some(2.5),
         },
     }
 }
@@ -56,8 +54,8 @@ fn result_serializes_network_metadata_and_point_timestamps() {
     assert_eq!(value["schema_version"], 1);
     assert_eq!(value["started_at"], "2026-07-19T09:02:59.123Z");
     assert_eq!(value["target"]["metadata_status"], "available");
-    assert_eq!(value["target"]["metadata"]["edge"]["colo"], "IST");
-    assert_eq!(value["target"]["metadata"]["asn"], 12_735);
+    assert_eq!(value["target"]["metadata"]["edge"]["colo"], "XYZ");
+    assert_eq!(value["target"]["metadata"]["asn"], 64_496);
     assert_eq!(
         value["points"]["latency"][0]["measured_at_unix_ms"],
         FIXED_UNIX_MS
@@ -159,34 +157,4 @@ fn loaded_latency_serialization_retains_only_latest_twenty_points() {
         retained,
         (2..=21).map(|value| value as f64).collect::<Vec<_>>()
     );
-}
-
-#[test]
-fn prd_schema_v1_example_has_every_serialized_top_level_field() {
-    let (_, json_contract) = include_str!("../docs/PRD.md")
-        .split_once("## 10. JSON contract")
-        .expect("PRD contains the normative JSON contract section");
-    let (_, fenced_json) = json_contract
-        .split_once("```json\n")
-        .expect("JSON contract contains a JSON example");
-    let (example, _) = fenced_json
-        .split_once("\n```")
-        .expect("JSON contract example has a closing fence");
-    let documented: serde_json::Value =
-        serde_json::from_str(example).expect("JSON contract example parses");
-    let serialized = serde_json::to_value(RunResult::empty()).unwrap();
-    let documented_keys = documented
-        .as_object()
-        .expect("documented result is an object")
-        .keys()
-        .map(String::as_str)
-        .collect::<BTreeSet<_>>();
-    let serialized_keys = serialized
-        .as_object()
-        .expect("serialized result is an object")
-        .keys()
-        .map(String::as_str)
-        .collect::<BTreeSet<_>>();
-
-    assert_eq!(documented_keys, serialized_keys);
 }

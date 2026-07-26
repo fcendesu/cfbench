@@ -65,10 +65,6 @@ fn formats_all_progress_event_lines_with_documented_units_and_punctuation() {
             },
             "[download] larger payload groups skipped — request duration threshold reached",
         ),
-        (
-            ProgressEvent::PacketLossUnavailable,
-            "[packet loss] unavailable — TURN not configured",
-        ),
     ];
 
     for (event, expected) in cases {
@@ -137,14 +133,17 @@ fn formats_safe_failure_categories_without_transport_details() {
 fn full_or_closed_progress_channel_never_blocks_or_fails() {
     let (reporter, receiver) = ProgressReporter::channel(1);
 
-    reporter.emit(ProgressEvent::PacketLossUnavailable);
-    reporter.emit(ProgressEvent::PacketLossUnavailable);
+    let event = ProgressEvent::DirectionFinished {
+        direction: Direction::Download,
+    };
+    reporter.emit(event.clone());
+    reporter.emit(event.clone());
     assert!(matches!(
         receiver.try_recv(),
-        Ok(ProgressEvent::PacketLossUnavailable)
+        Ok(ProgressEvent::DirectionFinished { .. })
     ));
 
     drop(receiver);
-    reporter.emit(ProgressEvent::PacketLossUnavailable);
-    ProgressReporter::disabled().emit(ProgressEvent::PacketLossUnavailable);
+    reporter.emit(event.clone());
+    ProgressReporter::disabled().emit(event);
 }

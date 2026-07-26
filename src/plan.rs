@@ -1,7 +1,7 @@
 use crate::config::RunConfig;
 
-pub const CLOUDFLARE_SPEEDTEST_VERSION: &str = "v1.11.0";
-pub const CLOUDFLARE_SPEEDTEST_COMMIT: &str = "cfc99a74fd8d5c2121d319aeb7894c6246202c65";
+pub const CLOUDFLARE_SPEEDTEST_VERSION: &str = "v1.12.1";
+pub const CLOUDFLARE_SPEEDTEST_COMMIT: &str = "567aeade7b6e1fbeea98edddb6031c5877678866";
 
 /// A bandwidth measurement direction.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -76,8 +76,8 @@ impl MeasurementPlan {
     }
 }
 
-const DEFAULT_CLOUDFLARE_STEPS: [MeasurementStep; 15] = [
-    MeasurementStep::Latency { packets: 1 },
+const DEFAULT_CLOUDFLARE_STEPS: [MeasurementStep; 25] = [
+    MeasurementStep::Latency { packets: 2 },
     MeasurementStep::Download {
         bytes: 100_000,
         count: 1,
@@ -89,16 +89,19 @@ const DEFAULT_CLOUDFLARE_STEPS: [MeasurementStep; 15] = [
         count: 9,
         bypass_finish: false,
     },
+    MeasurementStep::Latency { packets: 2 },
     MeasurementStep::Download {
         bytes: 1_000_000,
         count: 8,
         bypass_finish: false,
     },
+    MeasurementStep::Latency { packets: 2 },
     MeasurementStep::Upload {
         bytes: 100_000,
         count: 8,
         bypass_finish: false,
     },
+    MeasurementStep::Latency { packets: 2 },
     MeasurementStep::PacketLossUnsupported {
         packets: 1_000,
         responses_wait_ms: 3_000,
@@ -108,36 +111,43 @@ const DEFAULT_CLOUDFLARE_STEPS: [MeasurementStep; 15] = [
         count: 6,
         bypass_finish: false,
     },
+    MeasurementStep::Latency { packets: 2 },
     MeasurementStep::Download {
         bytes: 10_000_000,
         count: 6,
         bypass_finish: false,
     },
+    MeasurementStep::Latency { packets: 2 },
     MeasurementStep::Upload {
         bytes: 10_000_000,
         count: 4,
         bypass_finish: false,
     },
+    MeasurementStep::Latency { packets: 2 },
     MeasurementStep::Download {
         bytes: 25_000_000,
         count: 4,
         bypass_finish: false,
     },
+    MeasurementStep::Latency { packets: 2 },
     MeasurementStep::Upload {
         bytes: 25_000_000,
         count: 4,
         bypass_finish: false,
     },
+    MeasurementStep::Latency { packets: 2 },
     MeasurementStep::Download {
         bytes: 100_000_000,
         count: 3,
         bypass_finish: false,
     },
+    MeasurementStep::Latency { packets: 2 },
     MeasurementStep::Upload {
         bytes: 50_000_000,
         count: 3,
         bypass_finish: false,
     },
+    MeasurementStep::Latency { packets: 2 },
     MeasurementStep::Download {
         bytes: 250_000_000,
         count: 2,

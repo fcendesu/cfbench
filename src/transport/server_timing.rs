@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-const FALLBACK_SERVER_DURATION: Duration = Duration::from_millis(10);
+const FALLBACK_SERVER_DURATION: Duration = Duration::ZERO;
 
 /// Extracts Cloudflare's server processing time from a `Server-Timing` value.
 pub fn server_duration(header: Option<&str>) -> Duration {

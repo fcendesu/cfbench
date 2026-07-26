@@ -134,18 +134,18 @@ fn downloads(groups: &[(u64, u32, bool)]) -> MeasurementPlan {
 
 fn metadata_fixture() -> NetworkMetadata {
     NetworkMetadata {
-        public_ip: Some("2a02:ff0::1".to_owned()),
-        asn: Some(12_735),
-        as_organization: Some("TurkNet".to_owned()),
+        public_ip: Some("2001:db8::1".to_owned()),
+        asn: Some(64_496),
+        as_organization: Some("Example Network".to_owned()),
         client_location: ClientLocation {
-            country_code: Some("TR".to_owned()),
-            city: Some("Istanbul".to_owned()),
+            country_code: Some("ZZ".to_owned()),
+            city: Some("Example City".to_owned()),
             ..ClientLocation::default()
         },
         edge: EdgeLocation {
-            colo: Some("IST".to_owned()),
-            country_code: Some("TR".to_owned()),
-            city: Some("Arnavutkoy".to_owned()),
+            colo: Some("XYZ".to_owned()),
+            country_code: Some("ZZ".to_owned()),
+            city: Some("Example Edge".to_owned()),
             ..EdgeLocation::default()
         },
     }
@@ -1165,7 +1165,7 @@ async fn progress_reports_direction_finished_only_at_the_first_skipped_group() {
 }
 
 #[tokio::test]
-async fn progress_reports_packet_loss_unavailable_once_without_a_point() {
+async fn packet_loss_placeholder_does_not_emit_progress_or_a_measurement_point() {
     let runner = Runner::new(
         ScriptedTransport::new([]),
         plan(vec![MeasurementStep::PacketLossUnsupported {
@@ -1183,7 +1183,7 @@ async fn progress_reports_packet_loss_unavailable_once_without_a_point() {
 
     assert!(outcome.error.is_none());
     assert!(outcome.result.summary.packet_loss_ratio.is_none());
-    assert_eq!(events, vec![ProgressEvent::PacketLossUnavailable]);
+    assert!(events.is_empty());
 }
 
 #[tokio::test]
