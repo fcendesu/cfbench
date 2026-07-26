@@ -35,7 +35,10 @@ async fn text_mode_streams_progress_but_quiet_and_json_do_not() {
     .await;
     assert!(!quiet.stderr.contains("Testing against"));
     assert!(!quiet.stderr.contains("[latency"));
-    assert!(text.stdout.starts_with("cfbench 0.1.0\n"));
+    assert!(
+        text.stdout
+            .starts_with(concat!("cfbench ", env!("CARGO_PKG_VERSION"), "\n"))
+    );
 
     let json = run_progress_fixture(OutputOptions {
         json: true,
@@ -263,11 +266,11 @@ fn quiet_suppresses_progress_not_text_result_or_terminal_error() {
     let exit = write_outcome(partial_failure(), options, &mut stdout, &mut stderr).unwrap();
 
     assert_eq!(exit, 1);
-    assert!(
-        String::from_utf8(stdout)
-            .unwrap()
-            .starts_with("cfbench 0.1.0\n")
-    );
+    assert!(String::from_utf8(stdout).unwrap().starts_with(concat!(
+        "cfbench ",
+        env!("CARGO_PKG_VERSION"),
+        "\n"
+    )));
     let stderr = String::from_utf8(stderr).unwrap();
     assert!(!stderr.contains("Testing against"));
     assert!(stderr.contains("error:"));
@@ -321,11 +324,11 @@ fn diagnostics_are_written_for_successful_and_failed_outcomes() {
     let stderr = String::from_utf8(stderr).unwrap();
     assert!(stderr.contains("diagnostic: failed diagnostic\n"));
     assert!(stderr.contains("error: measurement cancelled"));
-    assert!(
-        String::from_utf8(stdout)
-            .unwrap()
-            .starts_with("cfbench 0.1.0\n")
-    );
+    assert!(String::from_utf8(stdout).unwrap().starts_with(concat!(
+        "cfbench ",
+        env!("CARGO_PKG_VERSION"),
+        "\n"
+    )));
 }
 
 #[tokio::test]

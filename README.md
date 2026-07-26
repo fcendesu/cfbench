@@ -15,7 +15,7 @@ curl -fsSL https://raw.githubusercontent.com/fcendesu/cfbench/main/scripts/insta
 To pin a release:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/fcendesu/cfbench/main/scripts/install.sh | CFBENCH_VERSION=0.1.0 sh
+curl -fsSL https://raw.githubusercontent.com/fcendesu/cfbench/main/scripts/install.sh | CFBENCH_VERSION=0.1.1 sh
 ```
 
 Manual package downloads are also available from [GitHub Releases](https://github.com/fcendesu/cfbench/releases).
@@ -54,7 +54,7 @@ Run `cfbench --help` for the complete option list. Progress and diagnostics use 
 
 `--no-metadata` skips the `/meta` request completely. The tool does not collect or send results to a cfbench service.
 
-Packet loss is deliberately not displayed or measured in 0.1.0. Cloudflare's metric requires TURN/WebRTC; cfbench does not substitute ICMP loss or present an incompatible value as packet loss.
+Packet loss is deliberately not displayed or measured in the 0.1 release series. Cloudflare's metric requires TURN/WebRTC; cfbench does not substitute ICMP loss or present an incompatible value as packet loss.
 
 ## Compatibility
 
