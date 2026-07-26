@@ -64,12 +64,22 @@ EOF
 
 chmod 755 "$mock_bin"/*
 
+assert_contains() {
+    needle=$1
+    file=$2
+    grep -F "$needle" "$file" >/dev/null || {
+        printf 'expected %s in %s\n' "$needle" "$file" >&2
+        exit 1
+    }
+}
+
 run_case() {
     os_id=$1
     artifact=$2
     expected=$3
     os_release="$test_root/$os_id-os-release"
     log="$test_root/$os_id.log"
+    status="$test_root/$os_id.status"
     printf 'ID=%s\n' "$os_id" > "$os_release"
 
     PATH="$mock_bin:$PATH" \
@@ -78,9 +88,12 @@ run_case() {
         CFBENCH_VERSION=0.1.0 \
         CFBENCH_TEST_ARTIFACT="$artifact" \
         CFBENCH_TEST_LOG="$log" \
-        sh "$project_root/scripts/install.sh"
+        sh "$project_root/scripts/install.sh" > /dev/null 2> "$status"
 
-    grep -F "$expected" "$log" >/dev/null
+    assert_contains "$expected" "$log"
+    assert_contains "Downloading cfbench v0.1.0 ($artifact)..." "$status"
+    assert_contains "Verifying $artifact..." "$status"
+    assert_contains "Installing $artifact..." "$status"
 }
 
 run_case ubuntu cfbench_0.1.0-1_amd64.deb "apt-get install -y $test_root/ubuntu-tmp/work/cfbench_0.1.0-1_amd64.deb"
