@@ -53,12 +53,14 @@ tmp_dir=$(mktemp -d "${TMPDIR:-/tmp}/cfbench-install.XXXXXX")
 cleanup() { rm -rf "$tmp_dir"; }
 trap cleanup EXIT HUP INT TERM
 
+printf 'Downloading cfbench %s (%s)...\n' "$version" "$artifact" >&2
 curl -fsSL "$base_url/$artifact" -o "$tmp_dir/$artifact"
 curl -fsSL "$base_url/$checksum_file" -o "$tmp_dir/$checksum_file"
 
 expected=$(awk -v name="$artifact" '$2 == name { print $1; exit }' "$tmp_dir/$checksum_file")
 [ -n "$expected" ] || fail "checksum for $artifact is missing"
 
+printf 'Verifying %s...\n' "$artifact" >&2
 if command -v sha256sum >/dev/null 2>&1; then
     actual=$(sha256sum "$tmp_dir/$artifact" | awk '{ print $1 }')
 else
@@ -79,16 +81,19 @@ run_privileged() {
 case "$package_type" in
     deb)
         command -v apt-get >/dev/null 2>&1 || fail "apt-get is required to install the Debian package"
+        printf 'Installing %s...\n' "$artifact" >&2
         run_privileged apt-get install -y "$tmp_dir/$artifact"
         printf 'Installed cfbench %s using the Debian package.\n' "$version"
         ;;
     rpm)
         command -v dnf >/dev/null 2>&1 || fail "dnf is required to install the RPM package"
+        printf 'Installing %s...\n' "$artifact" >&2
         run_privileged dnf install -y "$tmp_dir/$artifact"
         printf 'Installed cfbench %s using the RPM package.\n' "$version"
         ;;
     *)
         command -v tar >/dev/null 2>&1 || fail "tar is required for the standalone binary"
+        printf 'Installing %s...\n' "$artifact" >&2
         tar -xzf "$tmp_dir/$artifact" -C "$tmp_dir" cfbench
         mkdir -p "$install_dir"
         install -m 0755 "$tmp_dir/cfbench" "$install_dir/cfbench"
