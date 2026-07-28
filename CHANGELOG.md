@@ -7,6 +7,16 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-07-28
+
+### Fixed
+
+- The Debian package installer now grants APT's sandboxed downloader read access to the verified local package, avoiding an unnecessary unsandboxed-download warning.
+
+### Changed
+
+- The one-line installer now reports its download, verification, and installation stages on stderr.
+
 ## [0.1.1] - 2026-07-26
 
 ### Added
@@ -38,6 +48,7 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 - The installer validates the selected release artifact against its published SHA-256 checksum before installation.
 
-[Unreleased]: https://github.com/fcendesu/cfbench/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/fcendesu/cfbench/compare/v0.1.2...HEAD
+[0.1.2]: https://github.com/fcendesu/cfbench/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/fcendesu/cfbench/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/fcendesu/cfbench/releases/tag/v0.1.0
