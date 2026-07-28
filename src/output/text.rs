@@ -1,7 +1,9 @@
 use std::borrow::Cow;
 use std::fmt::Write;
 
-use crate::results::{EdgeLocation, MetadataStatus, NetworkMetadata, RunResult};
+use crate::results::{
+    EdgeLocation, MetadataStatus, NetworkMetadata, RpkiReachabilityStatus, RunResult,
+};
 
 const UNAVAILABLE: &str = "unavailable";
 
@@ -14,6 +16,7 @@ pub fn render_text(result: &RunResult) -> String {
     let _ = writeln!(output, "Target: Cloudflare edge");
     let _ = writeln!(output, "Protocol: {protocol}");
     metadata_lines(&mut output, result);
+    rpki_line(&mut output, result);
     let measured_at = nonempty(&result.started_at).unwrap_or(UNAVAILABLE);
     let _ = writeln!(output, "Measured at: {measured_at}");
     output.push('\n');
@@ -74,6 +77,55 @@ pub fn render_text(result: &RunResult) -> String {
     output
 }
 
+fn rpki_line(output: &mut String, result: &RunResult) {
+    let host = result
+        .rpki
+        .host
+        .as_deref()
+        .and_then(nonempty)
+        .map(escape_remote_controls);
+    let detail = result
+        .rpki
+        .detail
+        .as_deref()
+        .and_then(nonempty)
+        .map(escape_remote_controls);
+    match result.rpki.status {
+        RpkiReachabilityStatus::NotRequested => {}
+        RpkiReachabilityStatus::Reachable => {
+            let _ = write!(
+                output,
+                "RPKI invalid-route check (informational): reachable — route filtering was not observed on this path"
+            );
+            append_rpki_context(output, host.as_deref(), detail.as_deref());
+        }
+        RpkiReachabilityStatus::Unreachable => {
+            let _ = write!(
+                output,
+                "RPKI invalid-route check (informational): unreachable — this is consistent with route filtering, but is not proof"
+            );
+            append_rpki_context(output, host.as_deref(), detail.as_deref());
+        }
+        RpkiReachabilityStatus::Error => {
+            let _ = write!(
+                output,
+                "RPKI invalid-route check (informational): error — no filtering conclusion"
+            );
+            append_rpki_context(output, host.as_deref(), detail.as_deref());
+        }
+    }
+}
+
+fn append_rpki_context(output: &mut String, host: Option<&str>, detail: Option<&str>) {
+    if let Some(host) = host {
+        let _ = write!(output, "; host: {host}");
+    }
+    if let Some(detail) = detail {
+        let _ = write!(output, "; detail: {detail}");
+    }
+    output.push('\n');
+}
+
 fn metadata_lines(output: &mut String, result: &RunResult) {
     match result.target.metadata_status {
         MetadataStatus::Available => {
@@ -90,20 +142,20 @@ fn metadata_lines(output: &mut String, result: &RunResult) {
 
 fn available_metadata_lines(output: &mut String, metadata: &NetworkMetadata) {
     if let Some(edge) = edge_label(&metadata.edge) {
-        let edge = escape_metadata_controls(&edge);
+        let edge = escape_remote_controls(&edge);
         let _ = writeln!(output, "Edge (informational): {edge}");
     }
     if let Some(network) = network_label(metadata) {
-        let network = escape_metadata_controls(&network);
+        let network = escape_remote_controls(&network);
         let _ = writeln!(output, "Network: {network}");
     }
     if let Some(public_ip) = metadata.public_ip.as_deref().and_then(nonempty) {
-        let public_ip = escape_metadata_controls(public_ip);
+        let public_ip = escape_remote_controls(public_ip);
         let _ = writeln!(output, "Public IP: {public_ip}");
     }
 }
 
-fn escape_metadata_controls(value: &str) -> Cow<'_, str> {
+fn escape_remote_controls(value: &str) -> Cow<'_, str> {
     if !value.chars().any(char::is_control) {
         return Cow::Borrowed(value);
     }

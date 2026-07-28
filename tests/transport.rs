@@ -6,6 +6,7 @@ use std::time::Duration;
 use cfbench::config::{IpMode, RunConfig};
 use cfbench::error::TransportError;
 use cfbench::plan::{MeasurementPlan, MeasurementStep};
+use cfbench::results::RpkiReachabilityStatus;
 use cfbench::runner::{Runner, RunnerError};
 use cfbench::transport::ReqwestTransport;
 use support::{FixtureServer, ResponsePlan};
@@ -32,6 +33,77 @@ fn config(ip_mode: IpMode, timeout: Duration) -> RunConfig {
 fn transport_for(server: &FixtureServer, ip_mode: IpMode, timeout: Duration) -> ReqwestTransport {
     ReqwestTransport::with_base_url(config(ip_mode, timeout), server.url())
         .expect("fixture transport")
+}
+
+#[tokio::test]
+async fn rpki_request_obeys_the_selected_ip_family() {
+    let server = FixtureServer::start(ResponsePlan::Exact {
+        status: 200,
+        body_bytes: 0,
+        chunk_bytes: 1,
+        server_timing: None,
+    })
+    .await;
+
+    let reachable = transport_for(&server, IpMode::V4Only, Duration::from_secs(1))
+        .rpki_reachability(&CancellationToken::new())
+        .await
+        .unwrap();
+    let unreachable = transport_for(&server, IpMode::V6Only, Duration::from_secs(1))
+        .rpki_reachability(&CancellationToken::new())
+        .await
+        .unwrap();
+
+    assert_eq!(reachable.status, RpkiReachabilityStatus::Reachable);
+    assert_eq!(unreachable.status, RpkiReachabilityStatus::Unreachable);
+    assert_eq!(server.request_count(), 1);
+    let requests = server.requests().await;
+    assert_eq!(requests[0].path, "/rpki-invalid");
+    assert_eq!(requests[0].accept_encoding.as_deref(), Some("identity"));
+    assert!(requests[0].authorization.is_none());
+}
+
+#[tokio::test(start_paused = true)]
+async fn rpki_timeout_is_informationally_unreachable() {
+    let server = FixtureServer::start(ResponsePlan::DelayHeaders).await;
+
+    let result = transport_for(&server, IpMode::V4Only, Duration::from_secs(300))
+        .rpki_reachability(&CancellationToken::new())
+        .await
+        .unwrap();
+
+    assert_eq!(result.status, RpkiReachabilityStatus::Unreachable);
+    assert_eq!(result.host.as_deref(), Some("127.0.0.1"));
+    assert!(
+        result
+            .detail
+            .as_deref()
+            .is_some_and(|detail| detail.contains("timed out"))
+    );
+}
+
+#[tokio::test]
+async fn rpki_http_failure_is_an_informational_error() {
+    let server = FixtureServer::start(ResponsePlan::Exact {
+        status: 503,
+        body_bytes: 0,
+        chunk_bytes: 1,
+        server_timing: None,
+    })
+    .await;
+
+    let result = transport_for(&server, IpMode::V4Only, Duration::from_secs(1))
+        .rpki_reachability(&CancellationToken::new())
+        .await
+        .unwrap();
+
+    assert_eq!(result.status, RpkiReachabilityStatus::Error);
+    assert!(
+        result
+            .detail
+            .as_deref()
+            .is_some_and(|detail| detail.contains("HTTP status 503"))
+    );
 }
 
 #[tokio::test]

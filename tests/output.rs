@@ -1,5 +1,8 @@
 use cfbench::output::{render_json, render_text};
-use cfbench::results::{EdgeLocation, MetadataStatus, NetworkMetadata, RunResult};
+use cfbench::results::{
+    EdgeLocation, MetadataStatus, NetworkMetadata, RpkiReachability, RpkiReachabilityStatus,
+    RunResult,
+};
 
 const STARTED_AT: &str = "2026-07-19T09:02:59.123Z";
 
@@ -201,6 +204,23 @@ fn unavailable_and_disabled_metadata_have_distinct_text_output() {
     assert!(!disabled_text.contains("Public IP:"));
     assert!(!disabled_text.contains("Metadata:"));
     assert!(disabled_text.contains(&format!("Measured at: {STARTED_AT}\n")));
+}
+
+#[test]
+fn unreachable_rpki_text_is_informational_and_not_proof_of_filtering() {
+    let mut result = RunResult::empty();
+    result.rpki = RpkiReachability {
+        status: RpkiReachabilityStatus::Unreachable,
+        host: Some("invalid.rpki.cloudflare.com".to_owned()),
+        detail: Some("request timed out".to_owned()),
+    };
+
+    let rendered = render_text(&result);
+
+    assert!(rendered.contains("RPKI invalid-route check (informational): unreachable"));
+    assert!(rendered.contains("consistent with route filtering, but is not proof"));
+    assert!(rendered.contains("invalid.rpki.cloudflare.com"));
+    assert!(rendered.contains("request timed out"));
 }
 
 #[test]
