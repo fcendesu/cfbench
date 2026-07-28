@@ -19,6 +19,16 @@ fn compatibility_document_explains_the_informational_rpki_check() {
 }
 
 #[test]
+fn installation_document_uses_the_current_release_version() {
+    let document = std::fs::read_to_string("docs/INSTALLATION.md").unwrap();
+    assert!(!document.contains("0.1.1"));
+    assert!(document.contains("CFBENCH_VERSION=0.2.0"));
+    assert!(document.contains("cfbench-v0.2.0-SHA256SUMS.txt"));
+    assert!(document.contains("cfbench_0.2.0-1_amd64.deb"));
+    assert!(document.contains("cfbench-0.2.0-1.x86_64.rpm"));
+}
+
+#[test]
 fn upstream_plan_matches_v1_12_1() {
     let plan = default_cloudflare_plan();
 
