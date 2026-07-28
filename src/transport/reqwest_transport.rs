@@ -12,7 +12,7 @@ use tokio_util::sync::CancellationToken;
 use crate::config::{IpMode, RunConfig};
 use crate::error::TransportError;
 use crate::measurement::TimingObservation;
-use crate::results::NetworkMetadata;
+use crate::results::{NetworkMetadata, RpkiReachability, RpkiReachabilityStatus};
 
 use super::metadata::{MetadataDecodeError, metadata_from_slice};
 use super::server_timing::server_duration;
@@ -21,12 +21,15 @@ use super::upload_body::stream_upload;
 const CLOUDFLARE_BASE_URL: &str = "https://speed.cloudflare.com";
 const SERVER_TIMING: &str = "server-timing";
 const MAX_METADATA_BODY_BYTES: usize = 65_536;
+pub const RPKI_INVALID_URL: &str = "https://invalid.rpki.cloudflare.com";
+pub const RPKI_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Reqwest-backed transport shared by every measurement in one run.
 #[derive(Clone)]
 pub struct ReqwestTransport {
     client: Client,
     base_url: Url,
+    rpki_url: Url,
     referer: HeaderValue,
     origin: HeaderValue,
     request_timeout: Duration,
@@ -34,7 +37,9 @@ pub struct ReqwestTransport {
 
 impl ReqwestTransport {
     pub fn new(config: RunConfig) -> Result<Self, TransportError> {
-        Self::with_base_url(config, CLOUDFLARE_BASE_URL)
+        let base_url = parse_safe_url(CLOUDFLARE_BASE_URL)?;
+        let rpki_url = parse_safe_url(RPKI_INVALID_URL)?;
+        Self::with_urls(config, base_url, rpki_url)
     }
 
     /// Constructs a transport for a compatible endpoint, primarily local fixtures.
@@ -42,23 +47,66 @@ impl ReqwestTransport {
         config: RunConfig,
         base_url: impl AsRef<str>,
     ) -> Result<Self, TransportError> {
-        let mut base_url = Url::parse(base_url.as_ref())
+        let base_url = parse_safe_url(base_url.as_ref())?;
+        let rpki_url = base_url
+            .join("rpki-invalid")
             .map_err(|error| TransportError::InvalidBaseUrl(error.to_string()))?;
-        base_url
-            .set_username("")
-            .map_err(|_| TransportError::InvalidRequestContext)?;
-        base_url
-            .set_password(None)
-            .map_err(|_| TransportError::InvalidRequestContext)?;
+        Self::with_urls(config, base_url, rpki_url)
+    }
+
+    fn with_urls(config: RunConfig, base_url: Url, rpki_url: Url) -> Result<Self, TransportError> {
         let (referer, origin) = request_context(&base_url)?;
         let client = build_measurement_client(&config).map_err(TransportError::ClientBuild)?;
         Ok(Self {
             client,
             base_url,
+            rpki_url,
             referer,
             origin,
             request_timeout: config.request_timeout,
         })
+    }
+
+    /// Checks whether Cloudflare's intentionally RPKI-invalid route is reachable.
+    pub async fn rpki_reachability(
+        &self,
+        cancellation: &CancellationToken,
+    ) -> Result<RpkiReachability, TransportError> {
+        let host = self.rpki_url.host_str().map(ToOwned::to_owned);
+        let endpoint = redacted_endpoint(&self.rpki_url);
+        let request = self.client.get(self.rpki_url.clone());
+        let deadline = tokio::time::Instant::now() + RPKI_TIMEOUT;
+
+        match self
+            .send_headers(request, &endpoint, deadline, cancellation)
+            .await
+        {
+            Ok(response) if response.status().is_success() => Ok(RpkiReachability {
+                status: RpkiReachabilityStatus::Reachable,
+                host,
+                detail: None,
+            }),
+            Ok(response) => Ok(RpkiReachability {
+                status: RpkiReachabilityStatus::Error,
+                host,
+                detail: Some(format!(
+                    "endpoint {endpoint} returned HTTP status {}",
+                    response.status().as_u16()
+                )),
+            }),
+            Err(error @ TransportError::Cancelled { .. }) => Err(error),
+            Err(error @ TransportError::HeaderTimeout { .. })
+            | Err(error @ TransportError::Request { .. }) => Ok(RpkiReachability {
+                status: RpkiReachabilityStatus::Unreachable,
+                host,
+                detail: Some(error.to_string()),
+            }),
+            Err(error) => Ok(RpkiReachability {
+                status: RpkiReachabilityStatus::Error,
+                host,
+                detail: Some(error.to_string()),
+            }),
+        }
     }
 
     pub async fn latency(
@@ -303,6 +351,16 @@ impl ReqwestTransport {
         )
         .await
     }
+}
+
+fn parse_safe_url(value: &str) -> Result<Url, TransportError> {
+    let mut url =
+        Url::parse(value).map_err(|error| TransportError::InvalidBaseUrl(error.to_string()))?;
+    url.set_username("")
+        .map_err(|_| TransportError::InvalidRequestContext)?;
+    url.set_password(None)
+        .map_err(|_| TransportError::InvalidRequestContext)?;
+    Ok(url)
 }
 
 fn build_measurement_client(config: &RunConfig) -> Result<Client, reqwest::Error> {

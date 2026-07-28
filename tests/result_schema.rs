@@ -112,6 +112,16 @@ fn unavailable_packet_loss_is_explicit() {
 }
 
 #[test]
+fn rpki_result_is_additive_and_not_requested_by_default() {
+    let value = serde_json::to_value(RunResult::empty()).unwrap();
+
+    assert_eq!(value["schema_version"], 1);
+    assert_eq!(value["rpki"]["status"], "not_requested");
+    assert_eq!(value["rpki"]["host"], serde_json::Value::Null);
+    assert_eq!(value["rpki"]["detail"], serde_json::Value::Null);
+}
+
+#[test]
 fn empty_result_uses_stable_arrays_and_null_summary_values() {
     let value = serde_json::to_value(RunResult::empty()).unwrap();
 

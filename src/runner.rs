@@ -16,7 +16,9 @@ use crate::measurement::{
 };
 use crate::plan::{Direction, MeasurementPlan, MeasurementStep};
 use crate::progress::{ProgressEvent, ProgressFailureKind, ProgressReporter, ProgressStage};
-use crate::results::{MetadataStatus, NetworkMetadata, RunResult, reduce};
+use crate::results::{
+    MetadataStatus, NetworkMetadata, RpkiReachability, RpkiReachabilityStatus, RunResult, reduce,
+};
 use crate::transport::ReqwestTransport;
 
 const MIN_FINISH_DURATION_MS: f64 = 1_000.0;
@@ -30,10 +32,26 @@ pub type MeasurementFuture<'a> =
 pub type MetadataFuture<'a> =
     Pin<Box<dyn Future<Output = Result<NetworkMetadata, TransportError>> + Send + 'a>>;
 
+/// A boxed post-plan RPKI-invalid-route diagnostic operation.
+pub type RpkiFuture<'a> =
+    Pin<Box<dyn Future<Output = Result<RpkiReachability, TransportError>> + Send + 'a>>;
+
 /// The transport surface required by ordered measurement orchestration.
 pub trait MeasurementTransport: Send + Sync + 'static {
     fn metadata<'a>(&'a self, _: &'a CancellationToken) -> MetadataFuture<'a> {
         Box::pin(async { Err(TransportError::MetadataUnsupported) })
+    }
+
+    fn rpki_reachability<'a>(&'a self, _: &'a CancellationToken) -> RpkiFuture<'a> {
+        Box::pin(async {
+            Ok(RpkiReachability {
+                status: RpkiReachabilityStatus::Error,
+                host: None,
+                detail: Some(
+                    "RPKI-invalid-route reachability is unavailable for this transport".to_owned(),
+                ),
+            })
+        })
     }
 
     fn latency<'a>(&'a self, cancellation: &'a CancellationToken) -> MeasurementFuture<'a>;
@@ -67,6 +85,10 @@ pub trait MeasurementTransport: Send + Sync + 'static {
 impl MeasurementTransport for ReqwestTransport {
     fn metadata<'a>(&'a self, cancellation: &'a CancellationToken) -> MetadataFuture<'a> {
         Box::pin(ReqwestTransport::metadata(self, cancellation))
+    }
+
+    fn rpki_reachability<'a>(&'a self, cancellation: &'a CancellationToken) -> RpkiFuture<'a> {
+        Box::pin(ReqwestTransport::rpki_reachability(self, cancellation))
     }
 
     fn latency<'a>(&'a self, cancellation: &'a CancellationToken) -> MeasurementFuture<'a> {
@@ -142,6 +164,7 @@ pub struct Runner<T> {
     plan: MeasurementPlan,
     loaded_latency: bool,
     metadata: bool,
+    rpki_check: bool,
 }
 
 struct TransferProgress {
@@ -160,6 +183,7 @@ where
             plan,
             loaded_latency: true,
             metadata: false,
+            rpki_check: false,
         }
     }
 
@@ -170,6 +194,11 @@ where
 
     pub fn with_metadata(mut self, enabled: bool) -> Self {
         self.metadata = enabled;
+        self
+    }
+
+    pub fn with_rpki_check(mut self, enabled: bool) -> Self {
+        self.rpki_check = enabled;
         self
     }
 
@@ -215,6 +244,23 @@ where
                 Err(metadata_error) => result
                     .diagnostics
                     .push(metadata_diagnostic(&metadata_error)),
+            }
+        }
+        reconcile_parent_cancellation(&mut result, &mut error, cancellation);
+        let terminally_cancelled = matches!(error.as_ref(), Some(RunnerError::Cancelled { .. }));
+        if self.rpki_check && !terminally_cancelled {
+            match self.transport.rpki_reachability(cancellation).await {
+                Ok(rpki) => {
+                    if rpki.status == RpkiReachabilityStatus::Error {
+                        result.diagnostics.push(rpki_result_diagnostic(&rpki));
+                    }
+                    result.rpki = rpki;
+                }
+                Err(rpki_error) => {
+                    let rpki = rpki_error_result(&rpki_error);
+                    result.diagnostics.push(rpki_result_diagnostic(&rpki));
+                    result.rpki = rpki;
+                }
             }
         }
         reconcile_parent_cancellation(&mut result, &mut error, cancellation);
@@ -734,6 +780,82 @@ fn metadata_endpoint_diagnostic(endpoint: &str, detail: &str) -> String {
         "metadata collection failed for endpoint {}: {detail}",
         redact_endpoint(endpoint)
     )
+}
+
+fn rpki_error_result(error: &TransportError) -> RpkiReachability {
+    let endpoint = transport_error_endpoint(error);
+    let host = endpoint.and_then(endpoint_host);
+    let detail = match error {
+        TransportError::HeaderTimeout { endpoint, .. } => format!(
+            "timed out waiting for response headers from endpoint {}",
+            redact_endpoint(endpoint)
+        ),
+        TransportError::BodyTimeout { endpoint, .. } => format!(
+            "timed out while reading the response body from endpoint {}",
+            redact_endpoint(endpoint)
+        ),
+        TransportError::Request { endpoint, .. } => {
+            format!(
+                "HTTP request failed for endpoint {}",
+                redact_endpoint(endpoint)
+            )
+        }
+        TransportError::HttpStatus {
+            endpoint, status, ..
+        } => format!(
+            "endpoint {} returned HTTP status {status}",
+            redact_endpoint(endpoint)
+        ),
+        TransportError::BodyStream { endpoint, .. } => format!(
+            "response body stream failed for endpoint {}",
+            redact_endpoint(endpoint)
+        ),
+        TransportError::Cancelled { .. } => "RPKI invalid-route check was cancelled".to_owned(),
+        _ => "RPKI invalid-route check failed before a safe response was available".to_owned(),
+    };
+    RpkiReachability {
+        status: RpkiReachabilityStatus::Error,
+        host,
+        detail: Some(detail),
+    }
+}
+
+fn transport_error_endpoint(error: &TransportError) -> Option<&str> {
+    match error {
+        TransportError::HeaderTimeout { endpoint, .. }
+        | TransportError::BodyTimeout { endpoint, .. }
+        | TransportError::Request { endpoint, .. }
+        | TransportError::HttpStatus { endpoint, .. }
+        | TransportError::BodyStream { endpoint, .. }
+        | TransportError::DownloadPayloadMismatch { endpoint, .. }
+        | TransportError::UploadPayloadMismatch { endpoint, .. }
+        | TransportError::MetadataBodyTooLarge { endpoint, .. }
+        | TransportError::MetadataJson { endpoint, .. }
+        | TransportError::MetadataStructure { endpoint, .. } => Some(endpoint),
+        TransportError::Cancelled { .. }
+        | TransportError::MetadataUnsupported
+        | TransportError::InvalidBaseUrl(_)
+        | TransportError::InvalidRequestContext
+        | TransportError::ClientBuild(_) => None,
+    }
+}
+
+fn endpoint_host(endpoint: &str) -> Option<String> {
+    let endpoint = redact_endpoint(endpoint);
+    let (_, remainder) = endpoint.split_once("://")?;
+    let authority = remainder.split('/').next()?;
+    let host = authority
+        .strip_prefix('[')
+        .and_then(|value| value.split_once(']').map(|(host, _)| host))
+        .or_else(|| authority.split(':').next())
+        .unwrap_or(authority);
+    (!host.is_empty()).then(|| host.to_owned())
+}
+
+fn rpki_result_diagnostic(rpki: &RpkiReachability) -> String {
+    let host = rpki.host.as_deref().unwrap_or("unknown host");
+    let detail = rpki.detail.as_deref().unwrap_or("no detail available");
+    format!("RPKI invalid-route check failed for {host}: {detail}")
 }
 
 fn redact_endpoint(endpoint: &str) -> String {

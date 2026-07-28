@@ -1,11 +1,13 @@
 use clap::Parser;
 
+use crate::compatibility::VERSION_BANNER;
+
 /// An unofficial native speed test using Cloudflare-compatible methodology.
 ///
 /// Because native HTTP timing differs from browser timing, results are not
 /// expected to be numerically identical to speed.cloudflare.com.
 #[derive(Clone, Debug, Parser)]
-#[command(version, about, long_about)]
+#[command(version = VERSION_BANNER, about, long_about)]
 pub struct Cli {
     /// Use IPv4 only
     #[arg(long, conflicts_with = "ipv6")]
@@ -47,7 +49,15 @@ pub struct Cli {
     )]
     pub timeout: u64,
 
-    /// Suppress progress lines
+    /// Suppress progress and result diagnostics
     #[arg(short, long)]
     pub quiet: bool,
+
+    /// Show per-request measurement progress
+    #[arg(long)]
+    pub verbose: bool,
+
+    /// Perform an informational reachability probe to Cloudflare's RPKI-invalid route
+    #[arg(long)]
+    pub rpki_check: bool,
 }

@@ -4,6 +4,31 @@ use cfbench::config::{IpMode, RunConfig};
 use cfbench::plan::{Direction, MeasurementStep, default_cloudflare_plan};
 
 #[test]
+fn compatibility_document_uses_the_shared_upstream_baseline() {
+    let document = std::fs::read_to_string("docs/COMPATIBILITY.md").unwrap();
+    assert!(document.contains(cfbench::compatibility::SPEEDTEST_VERSION));
+    assert!(document.contains(cfbench::compatibility::SPEEDTEST_COMMIT));
+}
+
+#[test]
+fn compatibility_document_explains_the_informational_rpki_check() {
+    let document = std::fs::read_to_string("docs/COMPATIBILITY.md").unwrap();
+    assert!(document.contains("--rpki-check"));
+    assert!(document.contains("informational"));
+    assert!(document.contains("not proof"));
+}
+
+#[test]
+fn installation_document_uses_the_current_release_version() {
+    let document = std::fs::read_to_string("docs/INSTALLATION.md").unwrap();
+    assert!(!document.contains("0.1.1"));
+    assert!(document.contains("CFBENCH_VERSION=0.2.0"));
+    assert!(document.contains("cfbench-v0.2.0-SHA256SUMS.txt"));
+    assert!(document.contains("cfbench_0.2.0-1_amd64.deb"));
+    assert!(document.contains("cfbench-0.2.0-1.x86_64.rpm"));
+}
+
+#[test]
 fn upstream_plan_matches_v1_12_1() {
     let plan = default_cloudflare_plan();
 
@@ -43,6 +68,8 @@ fn run_config_defaults_to_auto_and_thirty_second_timeout() {
     assert!(!config.no_upload);
     assert!(!config.no_loaded_latency);
     assert!(!config.no_metadata);
+    assert!(!config.verbose);
+    assert!(!config.rpki_check);
 }
 
 #[test]

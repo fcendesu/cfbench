@@ -7,46 +7,75 @@ use std::task::{Context, Poll};
 use std::time::Duration;
 
 use cfbench::app::{
-    AppError, OutputOptions, run_with_signal, run_with_signal_and_progress,
-    spawn_progress_renderer, write_outcome, write_progress,
+    AppError, EXIT_COMPLETE, EXIT_FAILURE, EXIT_PARTIAL, OutputOptions, exit_status,
+    run_with_signal, run_with_signal_and_progress, spawn_progress_renderer, write_outcome,
+    write_progress,
 };
 use cfbench::cancellation::CancellationToken;
 use cfbench::error::TransportError;
 use cfbench::measurement::TimingObservation;
 use cfbench::plan::{MeasurementPlan, MeasurementStep};
 use cfbench::progress::{ProgressEvent, ProgressReporter};
-use cfbench::results::{EdgeLocation, MetadataStatus, NetworkMetadata, RunResult};
+use cfbench::results::{EdgeLocation, LatencyPoint, MetadataStatus, NetworkMetadata, RunResult};
 use cfbench::runner::{MeasurementFuture, MeasurementTransport, RunOutcome, Runner, RunnerError};
 
+#[test]
+fn accepted_core_points_with_a_core_failure_are_partial() {
+    let mut outcome = successful_latency_outcome();
+    outcome.error = Some(RunnerError::Transport {
+        stage: "download".into(),
+        source: fixture_error(),
+    });
+
+    assert_eq!(exit_status(&outcome), EXIT_PARTIAL);
+}
+
+#[test]
+fn metadata_and_rpki_diagnostics_do_not_downgrade_complete() {
+    let mut outcome = successful_latency_outcome();
+    outcome
+        .result
+        .diagnostics
+        .push("metadata collection failed".into());
+
+    assert_eq!(exit_status(&outcome), EXIT_COMPLETE);
+}
+
+#[test]
+fn cancellation_is_failure_even_after_an_accepted_point() {
+    let mut outcome = successful_latency_outcome();
+    outcome.error = Some(RunnerError::Cancelled {
+        stage: "run".into(),
+    });
+
+    assert_eq!(exit_status(&outcome), EXIT_FAILURE);
+}
+
 #[tokio::test]
-async fn text_mode_streams_progress_but_quiet_and_json_do_not() {
-    let text = run_progress_fixture(OutputOptions {
+async fn progress_requires_verbose_text_mode() {
+    let plain = run_progress_fixture(OutputOptions {
         json: false,
         quiet: false,
+        verbose: false,
     })
     .await;
-    assert!(text.stderr.contains("Testing against Cloudflare edge...\n"));
-    assert!(text.stderr.contains("[latency 1/1] 10.00 ms\n"));
+    assert!(!plain.stderr.contains("Testing against Cloudflare edge"));
 
-    let quiet = run_progress_fixture(OutputOptions {
+    let verbose = run_progress_fixture(OutputOptions {
         json: false,
-        quiet: true,
+        quiet: false,
+        verbose: true,
     })
     .await;
-    assert!(!quiet.stderr.contains("Testing against"));
-    assert!(!quiet.stderr.contains("[latency"));
-    assert!(
-        text.stdout
-            .starts_with(concat!("cfbench ", env!("CARGO_PKG_VERSION"), "\n"))
-    );
+    assert!(verbose.stderr.contains("Testing against Cloudflare edge"));
 
     let json = run_progress_fixture(OutputOptions {
         json: true,
         quiet: false,
+        verbose: true,
     })
     .await;
-    assert!(!json.stderr.contains("Testing against"));
-    assert!(!json.stderr.contains("[latency"));
+    assert!(!json.stderr.contains("Testing against Cloudflare edge"));
     serde_json::from_str::<serde_json::Value>(&json.stdout).unwrap();
 }
 
@@ -84,6 +113,7 @@ fn opening_progress_line_flushes_and_respects_suppression() {
         OutputOptions {
             json: false,
             quiet: false,
+            verbose: true,
         },
         &mut text,
     )
@@ -95,10 +125,12 @@ fn opening_progress_line_flushes_and_respects_suppression() {
         OutputOptions {
             json: false,
             quiet: true,
+            verbose: true,
         },
         OutputOptions {
             json: true,
             quiet: false,
+            verbose: true,
         },
     ] {
         let mut suppressed = SharedWriter::default();
@@ -129,6 +161,7 @@ async fn renderer_write_failure_cancels_runner_and_is_retained_after_join() {
             OutputOptions {
                 json: false,
                 quiet: false,
+                verbose: true,
             },
             BlockingFailureWriter(lifecycle.clone()),
         ),
@@ -171,6 +204,7 @@ async fn renderer_failure_after_channel_fills_does_not_deadlock_or_change_result
             OutputOptions {
                 json: false,
                 quiet: false,
+                verbose: true,
             },
             FailAfterAllRequestsWriter(lifecycle),
         ),
@@ -195,6 +229,7 @@ fn json_mode_writes_one_partial_document_without_progress_then_returns_one() {
     let options = OutputOptions {
         json: true,
         quiet: false,
+        verbose: false,
     };
     let mut stdout = Vec::new();
     let mut stderr = Vec::new();
@@ -229,6 +264,13 @@ fn json_mode_keeps_additive_metadata_in_one_schema_v1_document() {
         },
         ..NetworkMetadata::default()
     });
+    result.raw.latency.push(LatencyPoint {
+        ping_ms: 10.0,
+        ttfb_ms: 20.0,
+        server_time_ms: 0.0,
+        http_version: Some("HTTP/2".to_owned()),
+        measured_at_unix_ms: 0,
+    });
     let mut stdout = Vec::new();
     let mut stderr = Vec::new();
 
@@ -240,6 +282,7 @@ fn json_mode_keeps_additive_metadata_in_one_schema_v1_document() {
         OutputOptions {
             json: true,
             quiet: false,
+            verbose: false,
         },
         &mut stdout,
         &mut stderr,
@@ -255,15 +298,21 @@ fn json_mode_keeps_additive_metadata_in_one_schema_v1_document() {
 }
 
 #[test]
-fn quiet_suppresses_progress_not_text_result_or_terminal_error() {
+fn quiet_suppresses_result_diagnostics_but_keeps_exact_terminal_error() {
     let options = OutputOptions {
         json: false,
         quiet: true,
+        verbose: false,
     };
     let mut stdout = Vec::new();
     let mut stderr = Vec::new();
     write_progress(options, &mut stderr).unwrap();
-    let exit = write_outcome(partial_failure(), options, &mut stdout, &mut stderr).unwrap();
+    let mut outcome = partial_failure();
+    outcome
+        .result
+        .diagnostics
+        .push("retained result detail".to_owned());
+    let exit = write_outcome(outcome, options, &mut stdout, &mut stderr).unwrap();
 
     assert_eq!(exit, 1);
     assert!(String::from_utf8(stdout).unwrap().starts_with(concat!(
@@ -271,18 +320,27 @@ fn quiet_suppresses_progress_not_text_result_or_terminal_error() {
         env!("CARGO_PKG_VERSION"),
         "\n"
     )));
-    let stderr = String::from_utf8(stderr).unwrap();
-    assert!(!stderr.contains("Testing against"));
-    assert!(stderr.contains("error:"));
+    assert_eq!(
+        String::from_utf8(stderr).unwrap(),
+        "error: measurement cancelled during download\n"
+    );
 }
 
 #[test]
-fn diagnostics_are_written_for_successful_and_failed_outcomes() {
+fn quiet_suppresses_success_diagnostics_and_nonquiet_keeps_failure_diagnostics() {
     let options = OutputOptions {
         json: true,
         quiet: true,
+        verbose: false,
     };
     let mut success = cfbench::results::RunResult::empty();
+    success.raw.latency.push(LatencyPoint {
+        ping_ms: 10.0,
+        ttfb_ms: 20.0,
+        server_time_ms: 0.0,
+        http_version: Some("HTTP/2".to_owned()),
+        measured_at_unix_ms: 0,
+    });
     success.diagnostics.push("successful diagnostic".to_owned());
     let mut stdout = Vec::new();
     let mut stderr = Vec::new();
@@ -297,10 +355,7 @@ fn diagnostics_are_written_for_successful_and_failed_outcomes() {
     )
     .unwrap();
     assert_eq!(exit, 0);
-    assert_eq!(
-        String::from_utf8(stderr).unwrap(),
-        "diagnostic: successful diagnostic\n"
-    );
+    assert!(stderr.is_empty());
     serde_json::from_slice::<serde_json::Value>(&stdout).unwrap();
 
     let mut failure = partial_failure();
@@ -315,6 +370,7 @@ fn diagnostics_are_written_for_successful_and_failed_outcomes() {
         OutputOptions {
             json: false,
             quiet: false,
+            verbose: false,
         },
         &mut stdout,
         &mut stderr,
@@ -386,6 +442,7 @@ async fn selected_signal_forces_terminal_outcome_after_concurrent_final_success(
         OutputOptions {
             json: true,
             quiet: true,
+            verbose: false,
         },
         &mut stdout,
         &mut stderr,
@@ -443,6 +500,7 @@ async fn transport_failure_stderr_includes_stage_redacted_endpoint_and_cause() {
         OutputOptions {
             json: true,
             quiet: true,
+            verbose: false,
         },
         &mut stdout,
         &mut stderr,
@@ -469,6 +527,29 @@ fn partial_failure() -> RunOutcome {
     }
 }
 
+fn successful_latency_outcome() -> RunOutcome {
+    let mut result = RunResult::empty();
+    result.raw.latency.push(LatencyPoint {
+        ping_ms: 10.0,
+        ttfb_ms: 20.0,
+        server_time_ms: 0.0,
+        http_version: Some("HTTP/2".to_owned()),
+        measured_at_unix_ms: 0,
+    });
+    RunOutcome {
+        result,
+        error: None,
+    }
+}
+
+fn fixture_error() -> TransportError {
+    TransportError::HttpStatus {
+        endpoint: "https://fixture.invalid/__down".to_owned(),
+        status: 503,
+        payload_bytes: 0,
+    }
+}
+
 struct FixtureOutput {
     stdout: String,
     stderr: String,
@@ -482,7 +563,7 @@ async fn run_progress_fixture(options: OutputOptions) -> FixtureOutput {
         MeasurementPlan {
             upstream_version: "test",
             upstream_commit: "test",
-            steps: vec![MeasurementStep::Latency { packets: 1 }],
+            steps: vec![MeasurementStep::Latency { packets: 2 }],
         },
     )
     .with_loaded_latency(false);

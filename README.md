@@ -29,28 +29,33 @@ cfbench
 cfbench --ipv4
 cfbench --ipv6 --no-upload
 cfbench --no-loaded-latency
-cfbench --no-metadata
+cfbench --verbose --no-metadata
+cfbench --rpki-check
 cfbench --json > result.json
 cfbench --quiet --timeout 60
 ```
 
-Run `cfbench --help` for the complete option list. Progress and diagnostics use stderr. `--json` writes exactly one schema-v1 JSON document to stdout and suppresses progress; `--quiet` also suppresses progress.
+Run `cfbench --help` for the complete option list. Progress and diagnostics use stderr. `--verbose` enables live per-request progress. `--json` writes exactly one schema-v1 JSON document to stdout and suppresses progress; `--quiet` suppresses progress and result diagnostics while keeping terminal errors visible.
+
+For automation, cfbench exits `0` after a complete measurement, `2` after a
+partial measurement with at least one accepted latency, download, or upload
+point, and `1` when no usable measurement was accepted or the run is cancelled.
+Invalid command-line input is handled by Clap and also exits `2`.
 
 ### Example output
 
 The values below are illustrative and will vary by connection. `--no-metadata` keeps public IP, network, and edge-location information out of the result.
 
 ```text
-$ cfbench --no-metadata
+$ cfbench --verbose --no-metadata
 Testing against Cloudflare edge...
 [latency 1/1] 18.42 ms
 [download 100 KB 1/1] 71.25 Mbps — 11.2 ms
 ...
 
-cfbench 0.1.1
+cfbench 0.2.0
 Target: Cloudflare edge
 Protocol: IPv6 / HTTP/1.1
-Metadata: disabled
 Measured at: 2026-07-26T12:00:00.000Z
 
 Idle latency: 17.86 ms
@@ -77,13 +82,22 @@ Duration: 24.18 s
 
 `--no-metadata` skips the `/meta` request completely. The tool does not collect or send results to a cfbench service.
 
-Packet loss is deliberately not displayed or measured in the 0.1 release series. Cloudflare's metric requires TURN/WebRTC; cfbench does not substitute ICMP loss or present an incompatible value as packet loss.
+`--rpki-check` adds a post-measurement, informational request to Cloudflare's intentionally RPKI-invalid hostname. A reachable result means route filtering was not observed on that path; an unreachable result is consistent with filtering but is not proof. The check does not add a timing point, alter transferred-byte totals, or change the measurement exit status.
+
+Packet loss is deliberately not displayed or measured. Cloudflare's metric requires TURN/WebRTC; cfbench does not substitute ICMP loss or present an incompatible value as packet loss.
 
 ## Compatibility
 
 cfbench follows Cloudflare Speedtest `v1.12.1` for its request order, payload sizes, thresholds, percentile reductions, and loaded-latency rules. Native Rust timing cannot exactly reproduce the browser's `PerformanceResourceTiming` boundaries or browser-only TCP connection calibration, so results are methodology-compatible rather than numerically identical.
 
 See [installation details](docs/INSTALLATION.md) and [measurement compatibility](docs/COMPATIBILITY.md).
+
+## Live tests
+
+```bash
+# Contacts Cloudflare and consumes network traffic; ignored by default and not run in CI.
+cargo test --test live_cloudflare -- --ignored
+```
 
 ## License
 

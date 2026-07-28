@@ -9,9 +9,12 @@ use cfbench::error::TransportError;
 use cfbench::measurement::TimingObservation;
 use cfbench::plan::{Direction, MeasurementPlan, MeasurementStep};
 use cfbench::progress::{ProgressEvent, ProgressFailureKind, ProgressReporter, ProgressStage};
-use cfbench::results::{ClientLocation, EdgeLocation, MetadataStatus, NetworkMetadata};
+use cfbench::results::{
+    ClientLocation, EdgeLocation, MetadataStatus, NetworkMetadata, RpkiReachability,
+    RpkiReachabilityStatus,
+};
 use cfbench::runner::{
-    MeasurementFuture, MeasurementTransport, MetadataFuture, Runner, RunnerError,
+    MeasurementFuture, MeasurementTransport, MetadataFuture, RpkiFuture, Runner, RunnerError,
 };
 
 #[derive(Clone)]
@@ -20,6 +23,7 @@ struct ScriptedTransport {
     calls: Arc<Mutex<Vec<&'static str>>>,
     metadata_result: Arc<Mutex<Option<Result<NetworkMetadata, TransportError>>>>,
     metadata_delay: Duration,
+    rpki_result: Arc<Mutex<Option<Result<RpkiReachability, TransportError>>>>,
 }
 
 impl ScriptedTransport {
@@ -29,6 +33,7 @@ impl ScriptedTransport {
             calls: Arc::new(Mutex::new(Vec::new())),
             metadata_result: Arc::new(Mutex::new(None)),
             metadata_delay: Duration::ZERO,
+            rpki_result: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -39,6 +44,11 @@ impl ScriptedTransport {
     ) -> Self {
         self.metadata_result = Arc::new(Mutex::new(Some(result)));
         self.metadata_delay = delay;
+        self
+    }
+
+    fn with_rpki_result(mut self, result: Result<RpkiReachability, TransportError>) -> Self {
+        self.rpki_result = Arc::new(Mutex::new(Some(result)));
         self
     }
 
@@ -85,6 +95,17 @@ impl MeasurementTransport for ScriptedTransport {
         })
     }
 
+    fn rpki_reachability<'a>(&'a self, _: &'a CancellationToken) -> RpkiFuture<'a> {
+        Box::pin(async move {
+            self.calls.lock().unwrap().push("rpki");
+            self.rpki_result
+                .lock()
+                .unwrap()
+                .take()
+                .expect("RPKI script contains one result")
+        })
+    }
+
     fn latency<'a>(&'a self, _: &'a CancellationToken) -> MeasurementFuture<'a> {
         Box::pin(async move { self.next("latency") })
     }
@@ -108,6 +129,15 @@ impl MeasurementTransport for ScriptedTransport {
 
     fn upload<'a>(&'a self, _: u64, _: &'a CancellationToken) -> MeasurementFuture<'a> {
         Box::pin(async move { self.next("upload") })
+    }
+}
+
+fn fixture_error() -> TransportError {
+    TransportError::HttpStatus {
+        endpoint: "https://user:secret@invalid.rpki.cloudflare.com/?token=private#fragment"
+            .to_owned(),
+        status: 503,
+        payload_bytes: 0,
     }
 }
 
@@ -454,6 +484,73 @@ async fn metadata_failure_is_one_redacted_nonfatal_diagnostic() {
     assert!(!diagnostic.contains("secret"));
     assert!(!diagnostic.contains("private"));
     assert!(!diagnostic.contains("fragment"));
+}
+
+#[tokio::test]
+async fn enabled_rpki_failure_is_diagnostic_not_a_terminal_measurement_error() {
+    let transport = ScriptedTransport::new([]).with_rpki_result(Err(fixture_error()));
+    let calls = transport.calls.clone();
+
+    let outcome = Runner::new(transport, plan(Vec::new()))
+        .with_loaded_latency(false)
+        .with_rpki_check(true)
+        .run(&CancellationToken::new())
+        .await;
+
+    assert!(outcome.error.is_none());
+    assert!(outcome.result.failures.is_empty());
+    assert_eq!(outcome.result.rpki.status, RpkiReachabilityStatus::Error);
+    assert_eq!(
+        outcome.result.rpki.host.as_deref(),
+        Some("invalid.rpki.cloudflare.com")
+    );
+    assert_eq!(*calls.lock().unwrap(), ["rpki"]);
+    assert_eq!(outcome.result.diagnostics.len(), 1);
+    let diagnostic = &outcome.result.diagnostics[0];
+    assert!(diagnostic.contains("RPKI"));
+    assert!(diagnostic.contains("https://invalid.rpki.cloudflare.com/"));
+    assert!(diagnostic.contains("HTTP status 503"));
+    assert!(!diagnostic.contains("secret"));
+    assert!(!diagnostic.contains("private"));
+    assert!(!diagnostic.contains("fragment"));
+}
+
+#[tokio::test(start_paused = true)]
+async fn rpki_runs_after_the_plan_without_affecting_core_summary_or_usage() {
+    let transport = ScriptedTransport::new([Ok(TimingObservation::from_millis(
+        20.0, 500.0, 0.0, 100_000, "2",
+    ))])
+    .with_rpki_result(Ok(RpkiReachability {
+        status: RpkiReachabilityStatus::Unreachable,
+        host: Some("invalid.rpki.cloudflare.com".to_owned()),
+        detail: Some("request could not reach the invalid-route host".to_owned()),
+    }));
+    let calls = transport.calls.clone();
+
+    let outcome = Runner::new(
+        transport,
+        plan(vec![MeasurementStep::Download {
+            bytes: 100_000,
+            count: 1,
+            bypass_finish: true,
+        }]),
+    )
+    .with_loaded_latency(false)
+    .with_rpki_check(true)
+    .run(&CancellationToken::new())
+    .await;
+
+    assert!(outcome.error.is_none());
+    assert_eq!(*calls.lock().unwrap(), ["download", "rpki"]);
+    assert_eq!(
+        outcome.result.rpki.status,
+        RpkiReachabilityStatus::Unreachable
+    );
+    assert_eq!(outcome.result.raw.download.len(), 1);
+    assert!(outcome.result.summary.download_bps.is_some());
+    assert_eq!(outcome.result.usage.download_payload_bytes, 100_000);
+    assert_eq!(outcome.result.usage.upload_payload_bytes, 0);
+    assert!(outcome.result.usage.duration_ms < 1_000.0);
 }
 
 #[tokio::test]

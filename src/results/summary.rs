@@ -1,6 +1,6 @@
 use serde::Serialize;
 
-use super::{MetadataStatus, NetworkMetadata, RawResults, reduce};
+use super::{MetadataStatus, NetworkMetadata, RawResults, RpkiReachability, reduce};
 
 pub const SCHEMA_VERSION: u32 = 1;
 
@@ -70,6 +70,7 @@ pub struct RunResult {
     #[serde(rename = "points")]
     pub raw: RawResults,
     pub packet_loss: PacketLossResult,
+    pub rpki: RpkiReachability,
     pub failures: Vec<String>,
     pub diagnostics: Vec<String>,
 }
@@ -97,6 +98,7 @@ impl RunResult {
             usage: Usage::default(),
             raw,
             packet_loss: PacketLossResult::unavailable(),
+            rpki: RpkiReachability::default(),
             failures: Vec::new(),
             diagnostics: Vec::new(),
         }
