@@ -50,25 +50,28 @@ async fn run(cli: Cli, config: RunConfig) -> ExitCode {
         }
     };
 
-    let output_status = match write_outcome(
+    let output_status = exit_code_from_output_status(write_outcome(
         outcome,
         options,
         &mut io::stdout().lock(),
         &mut io::stderr().lock(),
-    ) {
-        Ok(0) => ExitCode::SUCCESS,
-        Ok(_) => ExitCode::FAILURE,
-        Err(error) => {
-            report_app_error(&error);
-            ExitCode::FAILURE
-        }
-    };
+    ));
 
     if let Some(error) = progress_error {
         report_app_error(&error);
         ExitCode::FAILURE
     } else {
         output_status
+    }
+}
+
+fn exit_code_from_output_status(status: Result<u8, AppError>) -> ExitCode {
+    match status {
+        Ok(status) => ExitCode::from(status),
+        Err(error) => {
+            report_app_error(&error);
+            ExitCode::FAILURE
+        }
     }
 }
 
@@ -111,10 +114,60 @@ fn failed_outcome(source: TransportError, mut result: RunResult) -> RunOutcome {
 
 #[cfg(test)]
 mod tests {
+    use cfbench::app::EXIT_PARTIAL;
     use cfbench::output::render_text;
-    use cfbench::results::MetadataStatus;
+    use cfbench::results::{LatencyPoint, MetadataStatus};
+    use cfbench::runner::RunnerError;
 
     use super::*;
+
+    #[test]
+    fn usable_partial_outcome_exits_two_at_the_process_boundary() {
+        let mut result = RunResult::empty();
+        result.raw.latency.push(LatencyPoint {
+            ping_ms: 10.0,
+            ttfb_ms: 20.0,
+            server_time_ms: 0.0,
+            http_version: Some("HTTP/2".to_owned()),
+            measured_at_unix_ms: 0,
+        });
+        let outcome = RunOutcome {
+            result,
+            error: Some(RunnerError::Transport {
+                stage: "download".to_owned(),
+                source: TransportError::HttpStatus {
+                    endpoint: "https://fixture.invalid/__down".to_owned(),
+                    status: 503,
+                    payload_bytes: 0,
+                },
+            }),
+        };
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+        let status = write_outcome(
+            outcome,
+            OutputOptions {
+                json: true,
+                quiet: true,
+                verbose: false,
+            },
+            &mut stdout,
+            &mut stderr,
+        )
+        .unwrap();
+
+        assert_eq!(status, EXIT_PARTIAL);
+        assert_eq!(
+            exit_code_from_output_status(Ok(status)),
+            ExitCode::from(EXIT_PARTIAL)
+        );
+        serde_json::from_slice::<serde_json::Value>(&stdout).unwrap();
+        assert!(
+            String::from_utf8(stderr)
+                .unwrap()
+                .contains("error: transport failed")
+        );
+    }
 
     #[test]
     fn setup_failure_uses_prebuild_rfc3339_run_timestamp() {
