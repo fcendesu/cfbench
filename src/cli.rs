@@ -49,15 +49,15 @@ pub struct Cli {
     )]
     pub timeout: u64,
 
-    /// Suppress progress lines
+    /// Suppress progress and result diagnostics
     #[arg(short, long)]
     pub quiet: bool,
 
-    /// Emit diagnostic details to stderr
+    /// Show per-request measurement progress
     #[arg(long)]
     pub verbose: bool,
 
-    /// Check route-origin authorization with RPKI
+    /// Perform an informational reachability probe to Cloudflare's RPKI-invalid route
     #[arg(long)]
     pub rpki_check: bool,
 }

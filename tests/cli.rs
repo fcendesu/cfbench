@@ -109,16 +109,31 @@ fn verbose_and_rpki_check_are_public_flags() {
 }
 
 #[test]
-fn version_identifies_the_compatibility_baseline() {
+fn help_describes_verbose_progress_and_informational_rpki_reachability() {
+    Command::cargo_bin("cfbench")
+        .unwrap()
+        .arg("--help")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "Show per-request measurement progress",
+        ))
+        .stdout(predicate::str::contains(
+            "Perform an informational reachability probe to Cloudflare's RPKI-invalid route",
+        ));
+}
+
+#[test]
+fn version_exactly_identifies_cfbench_and_the_compatibility_baseline() {
     Command::cargo_bin("cfbench")
         .unwrap()
         .arg("--version")
         .assert()
         .success()
-        .stdout(predicate::str::contains("Cloudflare Speedtest v1.12.1"))
-        .stdout(predicate::str::contains(
-            "567aeade7b6e1fbeea98edddb6031c5877678866",
-        ));
+        .stdout(predicate::eq(concat!(
+            "cfbench 0.2.0 (Cloudflare Speedtest v1.12.1, ",
+            "567aeade7b6e1fbeea98edddb6031c5877678866)\n"
+        )));
 }
 
 #[test]

@@ -298,7 +298,7 @@ fn json_mode_keeps_additive_metadata_in_one_schema_v1_document() {
 }
 
 #[test]
-fn quiet_suppresses_progress_not_text_result_or_terminal_error() {
+fn quiet_suppresses_result_diagnostics_but_keeps_exact_terminal_error() {
     let options = OutputOptions {
         json: false,
         quiet: true,
@@ -307,7 +307,12 @@ fn quiet_suppresses_progress_not_text_result_or_terminal_error() {
     let mut stdout = Vec::new();
     let mut stderr = Vec::new();
     write_progress(options, &mut stderr).unwrap();
-    let exit = write_outcome(partial_failure(), options, &mut stdout, &mut stderr).unwrap();
+    let mut outcome = partial_failure();
+    outcome
+        .result
+        .diagnostics
+        .push("retained result detail".to_owned());
+    let exit = write_outcome(outcome, options, &mut stdout, &mut stderr).unwrap();
 
     assert_eq!(exit, 1);
     assert!(String::from_utf8(stdout).unwrap().starts_with(concat!(
@@ -315,13 +320,14 @@ fn quiet_suppresses_progress_not_text_result_or_terminal_error() {
         env!("CARGO_PKG_VERSION"),
         "\n"
     )));
-    let stderr = String::from_utf8(stderr).unwrap();
-    assert!(!stderr.contains("Testing against"));
-    assert!(stderr.contains("error:"));
+    assert_eq!(
+        String::from_utf8(stderr).unwrap(),
+        "error: measurement cancelled during download\n"
+    );
 }
 
 #[test]
-fn diagnostics_are_written_for_successful_and_failed_outcomes() {
+fn quiet_suppresses_success_diagnostics_and_nonquiet_keeps_failure_diagnostics() {
     let options = OutputOptions {
         json: true,
         quiet: true,
@@ -349,10 +355,7 @@ fn diagnostics_are_written_for_successful_and_failed_outcomes() {
     )
     .unwrap();
     assert_eq!(exit, 0);
-    assert_eq!(
-        String::from_utf8(stderr).unwrap(),
-        "diagnostic: successful diagnostic\n"
-    );
+    assert!(stderr.is_empty());
     serde_json::from_slice::<serde_json::Value>(&stdout).unwrap();
 
     let mut failure = partial_failure();

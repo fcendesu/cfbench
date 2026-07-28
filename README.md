@@ -35,7 +35,7 @@ cfbench --json > result.json
 cfbench --quiet --timeout 60
 ```
 
-Run `cfbench --help` for the complete option list. Progress and diagnostics use stderr. `--verbose` enables live per-request progress. `--json` writes exactly one schema-v1 JSON document to stdout and suppresses progress; `--quiet` also suppresses progress.
+Run `cfbench --help` for the complete option list. Progress and diagnostics use stderr. `--verbose` enables live per-request progress. `--json` writes exactly one schema-v1 JSON document to stdout and suppresses progress; `--quiet` suppresses progress and result diagnostics while keeping terminal errors visible.
 
 For automation, cfbench exits `0` after a complete measurement, `2` after a
 partial measurement with at least one accepted latency, download, or upload
@@ -56,7 +56,6 @@ Testing against Cloudflare edge...
 cfbench 0.2.0
 Target: Cloudflare edge
 Protocol: IPv6 / HTTP/1.1
-Metadata: disabled
 Measured at: 2026-07-26T12:00:00.000Z
 
 Idle latency: 17.86 ms

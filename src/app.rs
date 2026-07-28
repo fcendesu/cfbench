@@ -264,8 +264,10 @@ pub fn write_outcome(
     }
     stdout.flush()?;
 
-    for diagnostic in &outcome.result.diagnostics {
-        writeln!(stderr, "diagnostic: {diagnostic}")?;
+    if !options.quiet {
+        for diagnostic in &outcome.result.diagnostics {
+            writeln!(stderr, "diagnostic: {diagnostic}")?;
+        }
     }
 
     if let Some(error) = &outcome.error {

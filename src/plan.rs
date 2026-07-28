@@ -1,7 +1,9 @@
 use crate::config::RunConfig;
 
-pub const CLOUDFLARE_SPEEDTEST_VERSION: &str = "v1.12.1";
-pub const CLOUDFLARE_SPEEDTEST_COMMIT: &str = "567aeade7b6e1fbeea98edddb6031c5877678866";
+pub use crate::compatibility::{
+    SPEEDTEST_COMMIT as CLOUDFLARE_SPEEDTEST_COMMIT,
+    SPEEDTEST_VERSION as CLOUDFLARE_SPEEDTEST_VERSION,
+};
 
 /// A bandwidth measurement direction.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

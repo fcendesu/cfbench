@@ -107,6 +107,26 @@ async fn rpki_http_failure_is_an_informational_error() {
 }
 
 #[tokio::test]
+async fn cancellation_preempts_rpki_waiting_for_headers() {
+    let server = FixtureServer::start(ResponsePlan::DelayHeaders).await;
+    let token = CancellationToken::new();
+    let transport = transport_for(&server, IpMode::V4Only, Duration::from_secs(30));
+    let task_token = token.clone();
+    let task = tokio::spawn(async move { transport.rpki_reachability(&task_token).await });
+    server.wait_until_stalled().await;
+    token.cancel();
+
+    let result = tokio::time::timeout(Duration::from_millis(250), task)
+        .await
+        .expect("RPKI cancellation completes promptly")
+        .expect("transport task joins");
+    assert!(matches!(
+        result,
+        Err(TransportError::Cancelled { payload_bytes: 0 })
+    ));
+}
+
+#[tokio::test]
 async fn measurement_requests_send_safe_same_origin_context() {
     let fixture = FixtureServer::cloudflare_compatible().await;
     let transport =
