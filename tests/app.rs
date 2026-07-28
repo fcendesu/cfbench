@@ -7,16 +7,49 @@ use std::task::{Context, Poll};
 use std::time::Duration;
 
 use cfbench::app::{
-    AppError, OutputOptions, run_with_signal, run_with_signal_and_progress,
-    spawn_progress_renderer, write_outcome, write_progress,
+    AppError, EXIT_COMPLETE, EXIT_FAILURE, EXIT_PARTIAL, OutputOptions, exit_status,
+    run_with_signal, run_with_signal_and_progress, spawn_progress_renderer, write_outcome,
+    write_progress,
 };
 use cfbench::cancellation::CancellationToken;
 use cfbench::error::TransportError;
 use cfbench::measurement::TimingObservation;
 use cfbench::plan::{MeasurementPlan, MeasurementStep};
 use cfbench::progress::{ProgressEvent, ProgressReporter};
-use cfbench::results::{EdgeLocation, MetadataStatus, NetworkMetadata, RunResult};
+use cfbench::results::{EdgeLocation, LatencyPoint, MetadataStatus, NetworkMetadata, RunResult};
 use cfbench::runner::{MeasurementFuture, MeasurementTransport, RunOutcome, Runner, RunnerError};
+
+#[test]
+fn accepted_core_points_with_a_core_failure_are_partial() {
+    let mut outcome = successful_latency_outcome();
+    outcome.error = Some(RunnerError::Transport {
+        stage: "download".into(),
+        source: fixture_error(),
+    });
+
+    assert_eq!(exit_status(&outcome), EXIT_PARTIAL);
+}
+
+#[test]
+fn metadata_and_rpki_diagnostics_do_not_downgrade_complete() {
+    let mut outcome = successful_latency_outcome();
+    outcome
+        .result
+        .diagnostics
+        .push("metadata collection failed".into());
+
+    assert_eq!(exit_status(&outcome), EXIT_COMPLETE);
+}
+
+#[test]
+fn cancellation_is_failure_even_after_an_accepted_point() {
+    let mut outcome = successful_latency_outcome();
+    outcome.error = Some(RunnerError::Cancelled {
+        stage: "run".into(),
+    });
+
+    assert_eq!(exit_status(&outcome), EXIT_FAILURE);
+}
 
 #[tokio::test]
 async fn progress_requires_verbose_text_mode() {
@@ -231,6 +264,13 @@ fn json_mode_keeps_additive_metadata_in_one_schema_v1_document() {
         },
         ..NetworkMetadata::default()
     });
+    result.raw.latency.push(LatencyPoint {
+        ping_ms: 10.0,
+        ttfb_ms: 20.0,
+        server_time_ms: 0.0,
+        http_version: Some("HTTP/2".to_owned()),
+        measured_at_unix_ms: 0,
+    });
     let mut stdout = Vec::new();
     let mut stderr = Vec::new();
 
@@ -288,6 +328,13 @@ fn diagnostics_are_written_for_successful_and_failed_outcomes() {
         verbose: false,
     };
     let mut success = cfbench::results::RunResult::empty();
+    success.raw.latency.push(LatencyPoint {
+        ping_ms: 10.0,
+        ttfb_ms: 20.0,
+        server_time_ms: 0.0,
+        http_version: Some("HTTP/2".to_owned()),
+        measured_at_unix_ms: 0,
+    });
     success.diagnostics.push("successful diagnostic".to_owned());
     let mut stdout = Vec::new();
     let mut stderr = Vec::new();
@@ -477,6 +524,29 @@ fn partial_failure() -> RunOutcome {
     }
 }
 
+fn successful_latency_outcome() -> RunOutcome {
+    let mut result = RunResult::empty();
+    result.raw.latency.push(LatencyPoint {
+        ping_ms: 10.0,
+        ttfb_ms: 20.0,
+        server_time_ms: 0.0,
+        http_version: Some("HTTP/2".to_owned()),
+        measured_at_unix_ms: 0,
+    });
+    RunOutcome {
+        result,
+        error: None,
+    }
+}
+
+fn fixture_error() -> TransportError {
+    TransportError::HttpStatus {
+        endpoint: "https://fixture.invalid/__down".to_owned(),
+        status: 503,
+        payload_bytes: 0,
+    }
+}
+
 struct FixtureOutput {
     stdout: String,
     stderr: String,
@@ -490,7 +560,7 @@ async fn run_progress_fixture(options: OutputOptions) -> FixtureOutput {
         MeasurementPlan {
             upstream_version: "test",
             upstream_commit: "test",
-            steps: vec![MeasurementStep::Latency { packets: 1 }],
+            steps: vec![MeasurementStep::Latency { packets: 2 }],
         },
     )
     .with_loaded_latency(false);

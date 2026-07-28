@@ -36,6 +36,10 @@ cfbench --quiet --timeout 60
 
 Run `cfbench --help` for the complete option list. Progress and diagnostics use stderr. `--verbose` enables live progress. `--json` writes exactly one schema-v1 JSON document to stdout and suppresses progress; `--quiet` also suppresses progress.
 
+For automation, cfbench exits `0` after a complete measurement, `2` after a
+partial measurement with at least one accepted latency, download, or upload
+point, and `1` when no usable measurement was accepted or the run is cancelled.
+
 ### Example output
 
 The values below are illustrative and will vary by connection. `--no-metadata` keeps public IP, network, and edge-location information out of the result.

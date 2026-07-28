@@ -15,6 +15,10 @@ use crate::runner::{MeasurementTransport, RunOutcome, Runner, RunnerError};
 const PROGRESS_CHANNEL_CAPACITY: usize = 256;
 const OPENING_PROGRESS_LINE: &str = "Testing against Cloudflare edge...";
 
+pub const EXIT_COMPLETE: u8 = 0;
+pub const EXIT_PARTIAL: u8 = 2;
+pub const EXIT_FAILURE: u8 = 1;
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct OutputOptions {
     pub json: bool,
@@ -264,12 +268,27 @@ pub fn write_outcome(
         writeln!(stderr, "diagnostic: {diagnostic}")?;
     }
 
-    match outcome.error {
-        Some(error) => {
-            writeln!(stderr, "error: {error}")?;
-            Ok(1)
-        }
-        None => Ok(0),
+    if let Some(error) = &outcome.error {
+        writeln!(stderr, "error: {error}")?;
+    }
+
+    Ok(exit_status(&outcome))
+}
+
+/// Classifies a rendered measurement outcome for automation callers.
+pub fn exit_status(outcome: &RunOutcome) -> u8 {
+    if matches!(outcome.error, Some(RunnerError::Cancelled { .. })) {
+        return EXIT_FAILURE;
+    }
+
+    let accepted = !outcome.result.raw.latency.is_empty()
+        || !outcome.result.raw.download.is_empty()
+        || !outcome.result.raw.upload.is_empty();
+
+    match (accepted, outcome.error.is_some()) {
+        (true, false) => EXIT_COMPLETE,
+        (true, true) => EXIT_PARTIAL,
+        (false, _) => EXIT_FAILURE,
     }
 }
 
