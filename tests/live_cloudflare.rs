@@ -1,5 +1,6 @@
 use cfbench::cancellation::CancellationToken;
 use cfbench::config::RunConfig;
+use cfbench::results::RpkiReachabilityStatus;
 use cfbench::transport::ReqwestTransport;
 
 const LIVE_TRANSFER_BYTES: u64 = 65_536;
@@ -9,7 +10,7 @@ fn live_transport() -> ReqwestTransport {
 }
 
 #[tokio::test]
-#[ignore = "consumes external network resources"]
+#[ignore = "contacts Cloudflare and consumes network traffic"]
 async fn live_cloudflare_zero_byte_probe_is_finite() {
     let observation = live_transport()
         .latency(&CancellationToken::new())
@@ -22,7 +23,7 @@ async fn live_cloudflare_zero_byte_probe_is_finite() {
 }
 
 #[tokio::test]
-#[ignore = "consumes external network resources"]
+#[ignore = "contacts Cloudflare and consumes network traffic"]
 async fn live_cloudflare_download_returns_exact_requested_size() {
     let observation = live_transport()
         .download(LIVE_TRANSFER_BYTES, None, &CancellationToken::new())
@@ -34,7 +35,7 @@ async fn live_cloudflare_download_returns_exact_requested_size() {
 }
 
 #[tokio::test]
-#[ignore = "consumes external network resources"]
+#[ignore = "contacts Cloudflare and consumes network traffic"]
 async fn live_cloudflare_upload_succeeds_with_finite_timing() {
     let observation = live_transport()
         .upload(LIVE_TRANSFER_BYTES, &CancellationToken::new())
@@ -47,7 +48,7 @@ async fn live_cloudflare_upload_succeeds_with_finite_timing() {
 }
 
 #[tokio::test]
-#[ignore = "uses external network metadata"]
+#[ignore = "contacts Cloudflare and consumes network traffic"]
 async fn live_cloudflare_metadata_has_broad_public_shape() {
     let metadata = live_transport()
         .metadata(&CancellationToken::new())
@@ -64,4 +65,16 @@ async fn live_cloudflare_metadata_has_broad_public_shape() {
     assert!(metadata.edge.colo.as_deref().is_some_and(|colo| {
         colo.len() == 3 && colo.bytes().all(|byte| byte.is_ascii_uppercase())
     }));
+}
+
+#[tokio::test]
+#[ignore = "contacts Cloudflare and consumes network traffic"]
+async fn live_cloudflare_rpki_check_returns_an_informational_result() {
+    let result = live_transport()
+        .rpki_reachability(&CancellationToken::new())
+        .await
+        .expect("Cloudflare RPKI-invalid endpoint produces an informational result");
+
+    assert_ne!(result.status, RpkiReachabilityStatus::NotRequested);
+    assert_eq!(result.host.as_deref(), Some("invalid.rpki.cloudflare.com"));
 }

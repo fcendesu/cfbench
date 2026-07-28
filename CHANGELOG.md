@@ -7,6 +7,20 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-07-28
+
+### Added
+
+- `--verbose` enables live per-request progress while the default text mode remains concise.
+- `--rpki-check` adds an informational, post-measurement invalid-route reachability diagnostic without changing timing, usage, reductions, or exit status.
+- Text and schema-v1 JSON output include the requested RPKI diagnostic result.
+- `--version` identifies the Cloudflare Speedtest version and commit used as the compatibility baseline.
+
+### Changed
+
+- Complete measurements exit `0`, usable partial measurements exit `2`, and runs without a usable measurement or cancelled runs exit `1`.
+- Live Cloudflare integration tests remain ignored by default, with an explicit opt-in command documented for maintainers.
+
 ## [0.1.2] - 2026-07-28
 
 ### Fixed
@@ -48,7 +62,8 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 - The installer validates the selected release artifact against its published SHA-256 checksum before installation.
 
-[Unreleased]: https://github.com/fcendesu/cfbench/compare/v0.1.2...HEAD
+[Unreleased]: https://github.com/fcendesu/cfbench/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/fcendesu/cfbench/compare/v0.1.2...v0.2.0
 [0.1.2]: https://github.com/fcendesu/cfbench/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/fcendesu/cfbench/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/fcendesu/cfbench/releases/tag/v0.1.0

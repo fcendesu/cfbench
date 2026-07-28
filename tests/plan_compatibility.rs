@@ -4,6 +4,21 @@ use cfbench::config::{IpMode, RunConfig};
 use cfbench::plan::{Direction, MeasurementStep, default_cloudflare_plan};
 
 #[test]
+fn compatibility_document_uses_the_shared_upstream_baseline() {
+    let document = std::fs::read_to_string("docs/COMPATIBILITY.md").unwrap();
+    assert!(document.contains(cfbench::compatibility::SPEEDTEST_VERSION));
+    assert!(document.contains(cfbench::compatibility::SPEEDTEST_COMMIT));
+}
+
+#[test]
+fn compatibility_document_explains_the_informational_rpki_check() {
+    let document = std::fs::read_to_string("docs/COMPATIBILITY.md").unwrap();
+    assert!(document.contains("--rpki-check"));
+    assert!(document.contains("informational"));
+    assert!(document.contains("not proof"));
+}
+
+#[test]
 fn upstream_plan_matches_v1_12_1() {
     let plan = default_cloudflare_plan();
 
