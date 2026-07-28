@@ -61,6 +61,8 @@ fn help_exposes_only_the_prd_flags() {
         "--no-metadata",
         "--timeout",
         "--quiet",
+        "--verbose",
+        "--rpki-check",
         "--help",
         "--version",
     ] {
@@ -98,16 +100,25 @@ fn no_metadata_is_public_and_defaults_to_collection() {
 }
 
 #[test]
-fn version_uses_package_version() {
+fn verbose_and_rpki_check_are_public_flags() {
+    let cli = Cli::try_parse_from(["cfbench", "--verbose", "--rpki-check"]).unwrap();
+    let config = RunConfig::try_from(cli).unwrap();
+
+    assert!(config.verbose);
+    assert!(config.rpki_check);
+}
+
+#[test]
+fn version_identifies_the_compatibility_baseline() {
     Command::cargo_bin("cfbench")
         .unwrap()
         .arg("--version")
         .assert()
         .success()
-        .stdout(predicate::eq(format!(
-            "cfbench {}\n",
-            env!("CARGO_PKG_VERSION")
-        )));
+        .stdout(predicate::str::contains("Cloudflare Speedtest v1.12.1"))
+        .stdout(predicate::str::contains(
+            "567aeade7b6e1fbeea98edddb6031c5877678866",
+        ));
 }
 
 #[test]

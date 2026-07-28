@@ -24,6 +24,8 @@ pub struct RunConfig {
     pub no_upload: bool,
     pub no_loaded_latency: bool,
     pub no_metadata: bool,
+    pub verbose: bool,
+    pub rpki_check: bool,
 }
 
 impl Default for RunConfig {
@@ -35,6 +37,8 @@ impl Default for RunConfig {
             no_upload: false,
             no_loaded_latency: false,
             no_metadata: false,
+            verbose: false,
+            rpki_check: false,
         }
     }
 }
@@ -65,6 +69,8 @@ impl TryFrom<Cli> for RunConfig {
             no_upload: cli.no_upload,
             no_loaded_latency: cli.no_loaded_latency,
             no_metadata: cli.no_metadata,
+            verbose: cli.verbose,
+            rpki_check: cli.rpki_check,
         })
     }
 }

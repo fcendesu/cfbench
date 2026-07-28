@@ -43,6 +43,8 @@ fn run_config_defaults_to_auto_and_thirty_second_timeout() {
     assert!(!config.no_upload);
     assert!(!config.no_loaded_latency);
     assert!(!config.no_metadata);
+    assert!(!config.verbose);
+    assert!(!config.rpki_check);
 }
 
 #[test]
