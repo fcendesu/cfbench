@@ -41,7 +41,7 @@ Run `cfbench --help` for the complete option list. Progress and diagnostics use 
 The values below are illustrative and will vary by connection. `--no-metadata` keeps public IP, network, and edge-location information out of the result.
 
 ```text
-$ cfbench --no-metadata
+$ cfbench --verbose --no-metadata
 Testing against Cloudflare edge...
 [latency 1/1] 18.42 ms
 [download 100 KB 1/1] 71.25 Mbps — 11.2 ms
