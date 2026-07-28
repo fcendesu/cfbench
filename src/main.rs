@@ -10,7 +10,7 @@ use cfbench::config::RunConfig;
 use cfbench::error::TransportError;
 use cfbench::plan::default_cloudflare_plan;
 use cfbench::results::{MetadataStatus, RunResult};
-use cfbench::runner::{RunOutcome, Runner};
+use cfbench::runner::{MeasurementTransport, RunOutcome, Runner};
 use cfbench::transport::ReqwestTransport;
 use clap::{CommandFactory, Parser, error::ErrorKind};
 
@@ -81,10 +81,13 @@ fn report_app_error(error: &AppError) {
     let _ = stderr.flush();
 }
 
-fn prepare_runner(
+fn prepare_runner<T>(
     config: &RunConfig,
-    build_transport: impl FnOnce(RunConfig) -> Result<ReqwestTransport, TransportError>,
-) -> Result<Runner<ReqwestTransport>, Box<RunOutcome>> {
+    build_transport: impl FnOnce(RunConfig) -> Result<T, TransportError>,
+) -> Result<Runner<T>, Box<RunOutcome>>
+where
+    T: MeasurementTransport,
+{
     let clock = RunClock::start();
     let mut setup_result = RunResult::empty();
     setup_result.started_at = clock.started_at().to_owned();
@@ -97,7 +100,8 @@ fn prepare_runner(
     let plan = default_cloudflare_plan().for_config(config);
     Ok(Runner::new(transport, plan)
         .with_loaded_latency(!config.no_loaded_latency)
-        .with_metadata(!config.no_metadata))
+        .with_metadata(!config.no_metadata)
+        .with_rpki_check(config.rpki_check))
 }
 
 fn failed_outcome(source: TransportError, mut result: RunResult) -> RunOutcome {
@@ -114,12 +118,98 @@ fn failed_outcome(source: TransportError, mut result: RunResult) -> RunOutcome {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
     use cfbench::app::EXIT_PARTIAL;
+    use cfbench::cancellation::CancellationToken;
     use cfbench::output::render_text;
-    use cfbench::results::{LatencyPoint, MetadataStatus};
-    use cfbench::runner::RunnerError;
+    use cfbench::plan::Direction;
+    use cfbench::results::{
+        LatencyPoint, MetadataStatus, RpkiReachability, RpkiReachabilityStatus,
+    };
+    use cfbench::runner::{MeasurementFuture, MeasurementTransport, RpkiFuture, RunnerError};
 
     use super::*;
+
+    struct RpkiFlagProbeTransport {
+        rpki_calls: Arc<AtomicUsize>,
+    }
+
+    impl MeasurementTransport for RpkiFlagProbeTransport {
+        fn rpki_reachability<'a>(&'a self, _: &'a CancellationToken) -> RpkiFuture<'a> {
+            Box::pin(async move {
+                self.rpki_calls.fetch_add(1, Ordering::SeqCst);
+                Ok(RpkiReachability {
+                    status: RpkiReachabilityStatus::Reachable,
+                    host: Some("invalid.rpki.cloudflare.com".to_owned()),
+                    detail: None,
+                })
+            })
+        }
+
+        fn latency<'a>(&'a self, _: &'a CancellationToken) -> MeasurementFuture<'a> {
+            Box::pin(async {
+                Err(TransportError::HttpStatus {
+                    endpoint: "https://fixture.invalid/__down".to_owned(),
+                    status: 503,
+                    payload_bytes: 0,
+                })
+            })
+        }
+
+        fn loaded_latency<'a>(
+            &'a self,
+            _: Direction,
+            _: &'a CancellationToken,
+        ) -> MeasurementFuture<'a> {
+            unreachable!("loaded latency is disabled")
+        }
+
+        fn download<'a>(
+            &'a self,
+            _: u64,
+            _: Option<&'a str>,
+            _: &'a CancellationToken,
+        ) -> MeasurementFuture<'a> {
+            unreachable!("download is disabled")
+        }
+
+        fn upload<'a>(&'a self, _: u64, _: &'a CancellationToken) -> MeasurementFuture<'a> {
+            unreachable!("upload is disabled")
+        }
+    }
+
+    #[tokio::test]
+    async fn prepare_runner_enables_rpki_check_from_run_config() {
+        let rpki_calls = Arc::new(AtomicUsize::new(0));
+        let config = RunConfig {
+            no_download: true,
+            no_upload: true,
+            no_loaded_latency: true,
+            no_metadata: true,
+            rpki_check: true,
+            ..RunConfig::default()
+        };
+        let runner = prepare_runner(&config, |_| {
+            Ok(RpkiFlagProbeTransport {
+                rpki_calls: rpki_calls.clone(),
+            })
+        })
+        .expect("build scripted runner");
+
+        let outcome = runner.run(&CancellationToken::new()).await;
+
+        assert!(matches!(
+            outcome.error,
+            Some(RunnerError::Transport { ref stage, .. }) if stage == "latency"
+        ));
+        assert_eq!(rpki_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            outcome.result.rpki.status,
+            RpkiReachabilityStatus::Reachable
+        );
+    }
 
     #[test]
     fn usable_partial_outcome_exits_two_at_the_process_boundary() {
@@ -172,7 +262,7 @@ mod tests {
     #[test]
     fn setup_failure_uses_prebuild_rfc3339_run_timestamp() {
         let outcome = match prepare_runner(&RunConfig::default(), |_| {
-            Err(TransportError::InvalidBaseUrl(
+            Err::<ReqwestTransport, _>(TransportError::InvalidBaseUrl(
                 "scripted setup failure".to_owned(),
             ))
         }) {
@@ -196,7 +286,7 @@ mod tests {
         };
         let outcome = match prepare_runner(&config, |received_config| {
             assert!(received_config.no_metadata);
-            Err(TransportError::InvalidBaseUrl(
+            Err::<ReqwestTransport, _>(TransportError::InvalidBaseUrl(
                 "scripted setup failure".to_owned(),
             ))
         }) {
