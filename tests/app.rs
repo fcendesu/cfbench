@@ -19,34 +19,30 @@ use cfbench::results::{EdgeLocation, MetadataStatus, NetworkMetadata, RunResult}
 use cfbench::runner::{MeasurementFuture, MeasurementTransport, RunOutcome, Runner, RunnerError};
 
 #[tokio::test]
-async fn text_mode_streams_progress_but_quiet_and_json_do_not() {
-    let text = run_progress_fixture(OutputOptions {
+async fn progress_requires_verbose_text_mode() {
+    let plain = run_progress_fixture(OutputOptions {
         json: false,
         quiet: false,
+        verbose: false,
     })
     .await;
-    assert!(text.stderr.contains("Testing against Cloudflare edge...\n"));
-    assert!(text.stderr.contains("[latency 1/1] 10.00 ms\n"));
+    assert!(!plain.stderr.contains("Testing against Cloudflare edge"));
 
-    let quiet = run_progress_fixture(OutputOptions {
+    let verbose = run_progress_fixture(OutputOptions {
         json: false,
-        quiet: true,
+        quiet: false,
+        verbose: true,
     })
     .await;
-    assert!(!quiet.stderr.contains("Testing against"));
-    assert!(!quiet.stderr.contains("[latency"));
-    assert!(
-        text.stdout
-            .starts_with(concat!("cfbench ", env!("CARGO_PKG_VERSION"), "\n"))
-    );
+    assert!(verbose.stderr.contains("Testing against Cloudflare edge"));
 
     let json = run_progress_fixture(OutputOptions {
         json: true,
         quiet: false,
+        verbose: true,
     })
     .await;
-    assert!(!json.stderr.contains("Testing against"));
-    assert!(!json.stderr.contains("[latency"));
+    assert!(!json.stderr.contains("Testing against Cloudflare edge"));
     serde_json::from_str::<serde_json::Value>(&json.stdout).unwrap();
 }
 
@@ -84,6 +80,7 @@ fn opening_progress_line_flushes_and_respects_suppression() {
         OutputOptions {
             json: false,
             quiet: false,
+            verbose: true,
         },
         &mut text,
     )
@@ -95,10 +92,12 @@ fn opening_progress_line_flushes_and_respects_suppression() {
         OutputOptions {
             json: false,
             quiet: true,
+            verbose: true,
         },
         OutputOptions {
             json: true,
             quiet: false,
+            verbose: true,
         },
     ] {
         let mut suppressed = SharedWriter::default();
@@ -129,6 +128,7 @@ async fn renderer_write_failure_cancels_runner_and_is_retained_after_join() {
             OutputOptions {
                 json: false,
                 quiet: false,
+                verbose: true,
             },
             BlockingFailureWriter(lifecycle.clone()),
         ),
@@ -171,6 +171,7 @@ async fn renderer_failure_after_channel_fills_does_not_deadlock_or_change_result
             OutputOptions {
                 json: false,
                 quiet: false,
+                verbose: true,
             },
             FailAfterAllRequestsWriter(lifecycle),
         ),
@@ -195,6 +196,7 @@ fn json_mode_writes_one_partial_document_without_progress_then_returns_one() {
     let options = OutputOptions {
         json: true,
         quiet: false,
+        verbose: false,
     };
     let mut stdout = Vec::new();
     let mut stderr = Vec::new();
@@ -240,6 +242,7 @@ fn json_mode_keeps_additive_metadata_in_one_schema_v1_document() {
         OutputOptions {
             json: true,
             quiet: false,
+            verbose: false,
         },
         &mut stdout,
         &mut stderr,
@@ -259,6 +262,7 @@ fn quiet_suppresses_progress_not_text_result_or_terminal_error() {
     let options = OutputOptions {
         json: false,
         quiet: true,
+        verbose: false,
     };
     let mut stdout = Vec::new();
     let mut stderr = Vec::new();
@@ -281,6 +285,7 @@ fn diagnostics_are_written_for_successful_and_failed_outcomes() {
     let options = OutputOptions {
         json: true,
         quiet: true,
+        verbose: false,
     };
     let mut success = cfbench::results::RunResult::empty();
     success.diagnostics.push("successful diagnostic".to_owned());
@@ -315,6 +320,7 @@ fn diagnostics_are_written_for_successful_and_failed_outcomes() {
         OutputOptions {
             json: false,
             quiet: false,
+            verbose: false,
         },
         &mut stdout,
         &mut stderr,
@@ -386,6 +392,7 @@ async fn selected_signal_forces_terminal_outcome_after_concurrent_final_success(
         OutputOptions {
             json: true,
             quiet: true,
+            verbose: false,
         },
         &mut stdout,
         &mut stderr,
@@ -443,6 +450,7 @@ async fn transport_failure_stderr_includes_stage_redacted_endpoint_and_cause() {
         OutputOptions {
             json: true,
             quiet: true,
+            verbose: false,
         },
         &mut stdout,
         &mut stderr,

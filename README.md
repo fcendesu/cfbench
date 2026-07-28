@@ -29,12 +29,12 @@ cfbench
 cfbench --ipv4
 cfbench --ipv6 --no-upload
 cfbench --no-loaded-latency
-cfbench --no-metadata
+cfbench --verbose --no-metadata
 cfbench --json > result.json
 cfbench --quiet --timeout 60
 ```
 
-Run `cfbench --help` for the complete option list. Progress and diagnostics use stderr. `--json` writes exactly one schema-v1 JSON document to stdout and suppresses progress; `--quiet` also suppresses progress.
+Run `cfbench --help` for the complete option list. Progress and diagnostics use stderr. `--verbose` enables live progress. `--json` writes exactly one schema-v1 JSON document to stdout and suppresses progress; `--quiet` also suppresses progress.
 
 ### Example output
 

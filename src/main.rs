@@ -31,6 +31,7 @@ async fn run(cli: Cli, config: RunConfig) -> ExitCode {
     let options = OutputOptions {
         json: cli.json,
         quiet: cli.quiet,
+        verbose: cli.verbose,
     };
     let (outcome, progress_error) = match prepare_runner(&config, ReqwestTransport::new) {
         Ok(runner) => {

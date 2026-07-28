@@ -19,6 +19,13 @@ const OPENING_PROGRESS_LINE: &str = "Testing against Cloudflare edge...";
 pub struct OutputOptions {
     pub json: bool,
     pub quiet: bool,
+    pub verbose: bool,
+}
+
+impl OutputOptions {
+    fn progress_enabled(self) -> bool {
+        self.verbose && !self.quiet && !self.json
+    }
 }
 
 #[derive(Debug, Error)]
@@ -51,7 +58,7 @@ where
     run_with_signal_inner(runner, signal, &cancellation, ProgressReporter::disabled()).await
 }
 
-/// Runs with live line-oriented progress only for ordinary non-quiet text.
+/// Runs with live line-oriented progress only for verbose, non-quiet text.
 ///
 /// The renderer owns its blocking writer on a dedicated thread. The thread is
 /// joined after the runner (including loaded probes) has released every sender
@@ -68,7 +75,7 @@ where
     W: Write + Send + 'static,
 {
     let cancellation = CancellationToken::new();
-    if options.quiet || options.json {
+    if !options.progress_enabled() {
         drop(stderr);
         return ProgressRunOutcome {
             outcome: run_with_signal_inner(
@@ -229,7 +236,7 @@ impl Drop for CancelOnDrop {
 }
 
 pub fn write_progress(options: OutputOptions, stderr: &mut impl Write) -> Result<(), AppError> {
-    if !options.quiet && !options.json {
+    if options.progress_enabled() {
         write_progress_line(stderr, OPENING_PROGRESS_LINE)?;
     }
     Ok(())
