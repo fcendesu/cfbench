@@ -347,9 +347,10 @@ fn quiet_partial_run_writes_only_terminal_error_and_exits_three() {
 
     assert_eq!(exit, 3);
     assert!(stdout.is_empty());
-    let stderr = String::from_utf8(stderr).unwrap();
-    assert!(stderr.starts_with("error: transport failed during download"));
-    assert!(!stderr.contains("diagnostic:"));
+    assert_eq!(
+        String::from_utf8(stderr).unwrap(),
+        "error: transport failed during download: endpoint https://fixture.invalid/__down returned HTTP status 503\n"
+    );
 }
 
 #[test]

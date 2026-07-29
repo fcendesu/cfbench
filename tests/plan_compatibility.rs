@@ -34,10 +34,11 @@ fn public_docs_define_silent_quiet_and_distinct_exit_codes() {
     let compatibility = std::fs::read_to_string("docs/COMPATIBILITY.md").unwrap();
 
     for document in [&readme, &compatibility] {
+        let document = document.split_whitespace().collect::<Vec<_>>().join(" ");
         assert!(document.contains("`--quiet`"));
         assert!(document.contains("exit"));
-        assert!(document.contains("`2`"));
-        assert!(document.contains("`3`"));
+        assert!(document.contains("`2` means invalid command-line usage"));
+        assert!(document.contains("`3` means a usable partial measurement"));
     }
     assert!(readme.contains("fully silent"));
     assert!(compatibility.contains("invalid command-line"));
