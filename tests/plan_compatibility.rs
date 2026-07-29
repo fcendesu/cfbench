@@ -21,11 +21,26 @@ fn compatibility_document_explains_the_informational_rpki_check() {
 #[test]
 fn installation_document_uses_the_current_release_version() {
     let document = std::fs::read_to_string("docs/INSTALLATION.md").unwrap();
-    assert!(!document.contains("0.1.1"));
-    assert!(document.contains("CFBENCH_VERSION=0.2.0"));
-    assert!(document.contains("cfbench-v0.2.0-SHA256SUMS.txt"));
-    assert!(document.contains("cfbench_0.2.0-1_amd64.deb"));
-    assert!(document.contains("cfbench-0.2.0-1.x86_64.rpm"));
+    assert!(!document.contains("0.2.0"));
+    assert!(document.contains("CFBENCH_VERSION=0.3.0"));
+    assert!(document.contains("cfbench-v0.3.0-SHA256SUMS.txt"));
+    assert!(document.contains("cfbench_0.3.0-1_amd64.deb"));
+    assert!(document.contains("cfbench-0.3.0-1.x86_64.rpm"));
+}
+
+#[test]
+fn public_docs_define_silent_quiet_and_distinct_exit_codes() {
+    let readme = std::fs::read_to_string("README.md").unwrap();
+    let compatibility = std::fs::read_to_string("docs/COMPATIBILITY.md").unwrap();
+
+    for document in [&readme, &compatibility] {
+        assert!(document.contains("`--quiet`"));
+        assert!(document.contains("exit"));
+        assert!(document.contains("`2`"));
+        assert!(document.contains("`3`"));
+    }
+    assert!(readme.contains("fully silent"));
+    assert!(compatibility.contains("invalid command-line"));
 }
 
 #[test]

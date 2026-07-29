@@ -1,6 +1,6 @@
 # Cloudflare Speedtest compatibility
 
-cfbench 0.2.0 is based on [Cloudflare Speedtest v1.12.1](https://github.com/cloudflare/speedtest/releases/tag/v1.12.1), commit [`567aeade7b6e1fbeea98edddb6031c5877678866`](https://github.com/cloudflare/speedtest/commit/567aeade7b6e1fbeea98edddb6031c5877678866).
+cfbench 0.3.0 is based on [Cloudflare Speedtest v1.12.1](https://github.com/cloudflare/speedtest/releases/tag/v1.12.1), commit [`567aeade7b6e1fbeea98edddb6031c5877678866`](https://github.com/cloudflare/speedtest/commit/567aeade7b6e1fbeea98edddb6031c5877678866).
 
 It matches the public default order of latency, download, upload, and loaded-latency work, including the v1.12.1 two-request latency phases interleaved between transfer groups. It uses the upstream median latency, 90th-percentile bandwidth, 10 ms bandwidth-eligibility, 250 ms loaded-latency, 400 ms probe-throttle, and 1000 ms adaptive-stop rules.
 
@@ -14,9 +14,17 @@ When `Server-Timing` has no usable Cloudflare duration, cfbench follows v1.12.1 
 
 ## Automation and diagnostics
 
-Ordinary text mode prints the final summary without per-request progress. `--verbose` enables live line-oriented progress on stderr. `--quiet` suppresses progress, and `--json` emits exactly one schema-v1 JSON document on stdout without progress.
+Ordinary text mode prints the final summary without per-request progress.
+`--verbose` enables live line-oriented progress on stderr. `--json` emits one
+schema-v1 document on stdout without progress. `--quiet` emits no normal output
+and reports the outcome through its exit status; a complete quiet run is fully
+silent, while partial and failed runs may print only their terminal error to
+stderr. `--quiet` cannot be combined with `--json` or `--verbose`.
 
-For automation, exit status `0` means the measurement completed, `2` means a partial result retained at least one accepted latency, download, or upload point, and `1` means no usable measurement was accepted or the run was cancelled. Output-writing failures also exit `1`; invalid command-line input is handled by Clap and exits `2`.
+Exit status `0` means complete, `1` means failure, cancellation, or no usable
+measurement, `2` means invalid command-line usage, and `3` means a usable
+partial measurement. JSON remains schema-v1 and measurement behavior is
+unchanged.
 
 `--rpki-check` performs a post-plan request to Cloudflare's intentionally RPKI-invalid hostname with a fixed five-second deadline. It reuses the configured no-retry client and strict IPv4 or IPv6 selection. The additive schema-v1 `rpki` result is informational: `reachable` means route filtering was not observed on this path, `unreachable` is consistent with filtering but is not proof, and `error` supports no filtering conclusion. The check creates no timing point, adds no payload usage, does not affect reductions, and does not change the measurement exit status.
 

@@ -7,6 +7,22 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-07-29
+
+### Changed
+
+- `--quiet` now suppresses normal result output and communicates successful
+  completion through the process exit status alone; terminal errors remain on
+  stderr.
+- `--quiet` now conflicts with `--json` and `--verbose`.
+- Usable partial measurements now exit `3`, reserving exit `2` for invalid
+  command-line usage reported by Clap.
+
+### Compatibility
+
+- Default text, verbose progress, schema-v1 JSON, and Cloudflare Speedtest
+  v1.12.1 measurement behavior are unchanged.
+
 ## [0.2.0] - 2026-07-28
 
 ### Added
@@ -62,7 +78,8 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 - The installer validates the selected release artifact against its published SHA-256 checksum before installation.
 
-[Unreleased]: https://github.com/fcendesu/cfbench/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/fcendesu/cfbench/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/fcendesu/cfbench/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/fcendesu/cfbench/compare/v0.1.2...v0.2.0
 [0.1.2]: https://github.com/fcendesu/cfbench/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/fcendesu/cfbench/compare/v0.1.0...v0.1.1

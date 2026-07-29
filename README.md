@@ -35,12 +35,16 @@ cfbench --json > result.json
 cfbench --quiet --timeout 60
 ```
 
-Run `cfbench --help` for the complete option list. Progress and diagnostics use stderr. `--verbose` enables live per-request progress. `--json` writes exactly one schema-v1 JSON document to stdout and suppresses progress; `--quiet` suppresses progress and result diagnostics while keeping terminal errors visible.
+Run `cfbench --help` for the complete option list. Progress and diagnostics use stderr. `--verbose` enables live per-request progress.
 
-For automation, cfbench exits `0` after a complete measurement, `2` after a
-partial measurement with at least one accepted latency, download, or upload
-point, and `1` when no usable measurement was accepted or the run is cancelled.
-Invalid command-line input is handled by Clap and also exits `2`.
+For automation, `--json` emits one schema-v1 document, while `--quiet` emits no
+normal output and reports the outcome through its exit status. A complete quiet
+run is fully silent; partial and failed runs may print only their terminal error
+to stderr. `--quiet` cannot be combined with `--json` or `--verbose`.
+
+Exit status `0` means complete, `1` means failure, cancellation, or no usable
+measurement, `2` means invalid command-line usage, and `3` means a usable
+partial measurement.
 
 ### Example output
 
@@ -53,7 +57,7 @@ Testing against Cloudflare edge...
 [download 100 KB 1/1] 71.25 Mbps — 11.2 ms
 ...
 
-cfbench 0.2.0
+cfbench 0.3.0
 Target: Cloudflare edge
 Protocol: IPv6 / HTTP/1.1
 Measured at: 2026-07-26T12:00:00.000Z
