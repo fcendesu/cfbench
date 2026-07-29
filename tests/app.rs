@@ -298,28 +298,85 @@ fn json_mode_keeps_additive_metadata_in_one_schema_v1_document() {
 }
 
 #[test]
-fn quiet_suppresses_result_diagnostics_but_keeps_exact_terminal_error() {
-    let options = OutputOptions {
-        json: false,
-        quiet: true,
-        verbose: false,
-    };
+fn quiet_complete_run_is_fully_silent() {
+    let mut outcome = successful_latency_outcome();
+    outcome
+        .result
+        .diagnostics
+        .push("suppressed informational diagnostic".to_owned());
     let mut stdout = Vec::new();
     let mut stderr = Vec::new();
-    write_progress(options, &mut stderr).unwrap();
+    let exit = write_outcome(
+        outcome,
+        OutputOptions {
+            json: false,
+            quiet: true,
+            verbose: false,
+        },
+        &mut stdout,
+        &mut stderr,
+    )
+    .unwrap();
+
+    assert_eq!(exit, EXIT_COMPLETE);
+    assert!(stdout.is_empty());
+    assert!(stderr.is_empty());
+}
+
+#[test]
+fn quiet_partial_run_writes_only_terminal_error_and_exits_three() {
+    let mut outcome = partial_transport_failure();
+    outcome
+        .result
+        .diagnostics
+        .push("suppressed retained-result detail".to_owned());
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+
+    let exit = write_outcome(
+        outcome,
+        OutputOptions {
+            json: false,
+            quiet: true,
+            verbose: false,
+        },
+        &mut stdout,
+        &mut stderr,
+    )
+    .unwrap();
+
+    assert_eq!(exit, 3);
+    assert!(stdout.is_empty());
+    assert_eq!(
+        String::from_utf8(stderr).unwrap(),
+        "error: transport failed during download: endpoint https://fixture.invalid/__down returned HTTP status 503\n"
+    );
+}
+
+#[test]
+fn quiet_terminal_cancellation_writes_only_terminal_error_and_exits_one() {
     let mut outcome = partial_failure();
     outcome
         .result
         .diagnostics
-        .push("retained result detail".to_owned());
-    let exit = write_outcome(outcome, options, &mut stdout, &mut stderr).unwrap();
+        .push("suppressed cancellation detail".to_owned());
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
 
-    assert_eq!(exit, 1);
-    assert!(String::from_utf8(stdout).unwrap().starts_with(concat!(
-        "cfbench ",
-        env!("CARGO_PKG_VERSION"),
-        "\n"
-    )));
+    let exit = write_outcome(
+        outcome,
+        OutputOptions {
+            json: false,
+            quiet: true,
+            verbose: false,
+        },
+        &mut stdout,
+        &mut stderr,
+    )
+    .unwrap();
+
+    assert_eq!(exit, EXIT_FAILURE);
+    assert!(stdout.is_empty());
     assert_eq!(
         String::from_utf8(stderr).unwrap(),
         "error: measurement cancelled during download\n"
@@ -329,7 +386,7 @@ fn quiet_suppresses_result_diagnostics_but_keeps_exact_terminal_error() {
 #[test]
 fn quiet_suppresses_success_diagnostics_and_nonquiet_keeps_failure_diagnostics() {
     let options = OutputOptions {
-        json: true,
+        json: false,
         quiet: true,
         verbose: false,
     };
@@ -356,7 +413,7 @@ fn quiet_suppresses_success_diagnostics_and_nonquiet_keeps_failure_diagnostics()
     .unwrap();
     assert_eq!(exit, 0);
     assert!(stderr.is_empty());
-    serde_json::from_slice::<serde_json::Value>(&stdout).unwrap();
+    assert!(stdout.is_empty());
 
     let mut failure = partial_failure();
     failure
@@ -440,7 +497,7 @@ async fn selected_signal_forces_terminal_outcome_after_concurrent_final_success(
     let exit = write_outcome(
         outcome,
         OutputOptions {
-            json: true,
+            json: false,
             quiet: true,
             verbose: false,
         },
@@ -449,7 +506,7 @@ async fn selected_signal_forces_terminal_outcome_after_concurrent_final_success(
     )
     .unwrap();
     assert_eq!(exit, 1);
-    serde_json::from_slice::<serde_json::Value>(&stdout).unwrap();
+    assert!(stdout.is_empty());
 }
 
 #[tokio::test]
@@ -498,7 +555,7 @@ async fn transport_failure_stderr_includes_stage_redacted_endpoint_and_cause() {
     let exit = write_outcome(
         outcome,
         OutputOptions {
-            json: true,
+            json: false,
             quiet: true,
             verbose: false,
         },
@@ -525,6 +582,22 @@ fn partial_failure() -> RunOutcome {
         result,
         error: Some(error),
     }
+}
+
+fn partial_transport_failure() -> RunOutcome {
+    let mut outcome = successful_latency_outcome();
+    outcome.error = Some(RunnerError::Transport {
+        stage: "download".to_owned(),
+        source: fixture_error(),
+    });
+    outcome.result.failures.push(
+        outcome
+            .error
+            .as_ref()
+            .expect("partial failure has terminal error")
+            .to_string(),
+    );
+    outcome
 }
 
 fn successful_latency_outcome() -> RunOutcome {

@@ -49,8 +49,8 @@ pub struct Cli {
     )]
     pub timeout: u64,
 
-    /// Suppress progress and result diagnostics
-    #[arg(short, long)]
+    /// Suppress normal output; report status with the exit code
+    #[arg(short, long, conflicts_with_all = ["json", "verbose"])]
     pub quiet: bool,
 
     /// Show per-request measurement progress

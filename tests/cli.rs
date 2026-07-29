@@ -106,6 +106,40 @@ fn verbose_and_rpki_check_are_public_flags() {
 
     assert!(config.verbose);
     assert!(config.rpki_check);
+
+    for arguments in [
+        ["cfbench", "--quiet", "--json"],
+        ["cfbench", "--quiet", "--verbose"],
+    ] {
+        let error = Cli::try_parse_from(arguments).unwrap_err();
+        assert_eq!(error.kind(), clap::error::ErrorKind::ArgumentConflict);
+    }
+}
+
+#[test]
+fn quiet_conflicts_with_json_and_verbose_before_runtime() {
+    for conflicting in ["--json", "--verbose"] {
+        Command::cargo_bin("cfbench")
+            .unwrap()
+            .args(["--quiet", conflicting])
+            .assert()
+            .failure()
+            .code(2)
+            .stdout(predicate::str::is_empty())
+            .stderr(predicate::str::contains("--quiet").and(predicate::str::contains(conflicting)));
+    }
+}
+
+#[test]
+fn help_defines_quiet_as_exit_code_only() {
+    Command::cargo_bin("cfbench")
+        .unwrap()
+        .arg("--help")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "Suppress normal output; report status with the exit code",
+        ));
 }
 
 #[test]
@@ -131,7 +165,7 @@ fn version_exactly_identifies_cfbench_and_the_compatibility_baseline() {
         .assert()
         .success()
         .stdout(predicate::eq(concat!(
-            "cfbench 0.2.0 (Cloudflare Speedtest v1.12.1, ",
+            "cfbench 0.3.0 (Cloudflare Speedtest v1.12.1, ",
             "567aeade7b6e1fbeea98edddb6031c5877678866)\n"
         )));
 }

@@ -16,8 +16,15 @@ const PROGRESS_CHANNEL_CAPACITY: usize = 256;
 const OPENING_PROGRESS_LINE: &str = "Testing against Cloudflare edge...";
 
 pub const EXIT_COMPLETE: u8 = 0;
-pub const EXIT_PARTIAL: u8 = 2;
 pub const EXIT_FAILURE: u8 = 1;
+pub const EXIT_PARTIAL: u8 = 3;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum FinalOutput {
+    Text,
+    Json,
+    None,
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct OutputOptions {
@@ -27,6 +34,16 @@ pub struct OutputOptions {
 }
 
 impl OutputOptions {
+    fn final_output(self) -> FinalOutput {
+        if self.quiet {
+            FinalOutput::None
+        } else if self.json {
+            FinalOutput::Json
+        } else {
+            FinalOutput::Text
+        }
+    }
+
     fn progress_enabled(self) -> bool {
         self.verbose && !self.quiet && !self.json
     }
@@ -253,16 +270,11 @@ pub fn write_outcome(
     stdout: &mut impl Write,
     stderr: &mut impl Write,
 ) -> Result<u8, AppError> {
-    let rendered = if options.json {
-        render_json(&outcome.result)?
-    } else {
-        render_text(&outcome.result)
-    };
-    stdout.write_all(rendered.as_bytes())?;
-    if !rendered.ends_with('\n') {
-        stdout.write_all(b"\n")?;
+    match options.final_output() {
+        FinalOutput::Text => write_rendered(stdout, &render_text(&outcome.result))?,
+        FinalOutput::Json => write_rendered(stdout, &render_json(&outcome.result)?)?,
+        FinalOutput::None => {}
     }
-    stdout.flush()?;
 
     if !options.quiet {
         for diagnostic in &outcome.result.diagnostics {
@@ -275,6 +287,15 @@ pub fn write_outcome(
     }
 
     Ok(exit_status(&outcome))
+}
+
+fn write_rendered(stdout: &mut impl Write, rendered: &str) -> Result<(), AppError> {
+    stdout.write_all(rendered.as_bytes())?;
+    if !rendered.ends_with('\n') {
+        stdout.write_all(b"\n")?;
+    }
+    stdout.flush()?;
+    Ok(())
 }
 
 /// Classifies a rendered measurement outcome for automation callers.

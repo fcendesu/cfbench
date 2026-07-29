@@ -121,7 +121,6 @@ mod tests {
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
-    use cfbench::app::EXIT_PARTIAL;
     use cfbench::cancellation::CancellationToken;
     use cfbench::output::render_text;
     use cfbench::plan::Direction;
@@ -212,7 +211,7 @@ mod tests {
     }
 
     #[test]
-    fn usable_partial_outcome_exits_two_at_the_process_boundary() {
+    fn usable_partial_outcome_exits_three_at_the_process_boundary() {
         let mut result = RunResult::empty();
         result.raw.latency.push(LatencyPoint {
             ping_ms: 10.0,
@@ -237,7 +236,7 @@ mod tests {
         let status = write_outcome(
             outcome,
             OutputOptions {
-                json: true,
+                json: false,
                 quiet: true,
                 verbose: false,
             },
@@ -246,12 +245,9 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(status, EXIT_PARTIAL);
-        assert_eq!(
-            exit_code_from_output_status(Ok(status)),
-            ExitCode::from(EXIT_PARTIAL)
-        );
-        serde_json::from_slice::<serde_json::Value>(&stdout).unwrap();
+        assert_eq!(status, 3);
+        assert_eq!(exit_code_from_output_status(Ok(status)), ExitCode::from(3));
+        assert!(stdout.is_empty());
         assert!(
             String::from_utf8(stderr)
                 .unwrap()
