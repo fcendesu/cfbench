@@ -137,7 +137,27 @@ impl MeasurementTransport for TimedTransport {
         bytes: u64,
         cancellation: &'a CancellationToken,
     ) -> MeasurementFuture<'a> {
-        self.download(bytes, None, cancellation)
+        Box::pin(async move {
+            let scripted = self.transfers.lock().unwrap().pop_front().unwrap();
+            let (wall_time, adjusted_ms) = scripted?;
+            let observation = TimingObservation::from_millis(
+                adjusted_ms,
+                adjusted_ms,
+                0.0,
+                bytes,
+                self.transfer_http_version,
+            )
+            .with_ip_family(self.transfer_ip_family);
+            if self.ignore_transfer_cancellation {
+                tokio::time::sleep(wall_time).await;
+                Ok(observation)
+            } else {
+                tokio::select! {
+                    () = cancellation.cancelled() => Err(TransportError::Cancelled { payload_bytes: 0 }),
+                    () = tokio::time::sleep(wall_time) => Ok(observation),
+                }
+            }
+        })
     }
 }
 

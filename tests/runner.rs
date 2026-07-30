@@ -950,6 +950,41 @@ async fn finish_uses_strict_minimum_after_whole_group() {
 }
 
 #[tokio::test]
+async fn upload_finish_threshold_uses_ttfb_duration() {
+    let transport = ScriptedTransport::new([
+        Ok(TimingObservation::from_millis(
+            1_001.0, 1_010.0, 20.0, 100_000, "HTTP/1.1",
+        )),
+        Ok(TimingObservation::from_millis(
+            20.0, 30.0, 1.0, 1_000_000, "HTTP/1.1",
+        )),
+    ]);
+    let calls = transport.calls.clone();
+    let outcome = Runner::new(
+        transport,
+        plan(vec![
+            MeasurementStep::Upload {
+                bytes: 100_000,
+                count: 1,
+                bypass_finish: false,
+            },
+            MeasurementStep::Upload {
+                bytes: 1_000_000,
+                count: 1,
+                bypass_finish: false,
+            },
+        ]),
+    )
+    .with_loaded_latency(false)
+    .run(&CancellationToken::new())
+    .await;
+
+    assert!(outcome.error.is_none());
+    assert_eq!(*calls.lock().unwrap(), ["upload"]);
+    assert_eq!(outcome.result.raw.upload[0].adjusted_duration_ms, 1_001.0);
+}
+
+#[tokio::test]
 async fn bypass_and_direction_finish_states_are_independent() {
     let transport = ScriptedTransport::transfer_durations([2000.0, 1200.0, 1300.0, 500.0]);
     let calls = transport.calls.clone();
