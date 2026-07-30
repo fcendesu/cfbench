@@ -3,6 +3,10 @@ use std::time::Duration;
 use cfbench::config::{IpMode, RunConfig};
 use cfbench::plan::{Direction, MeasurementStep, default_cloudflare_plan};
 
+mod support;
+
+use support::upstream_v1_12_1::fixture;
+
 #[test]
 fn compatibility_document_uses_the_shared_upstream_baseline() {
     let document = std::fs::read_to_string("docs/COMPATIBILITY.md").unwrap();
@@ -47,13 +51,21 @@ fn public_docs_define_silent_quiet_and_distinct_exit_codes() {
 #[test]
 fn upstream_plan_matches_v1_12_1() {
     let plan = default_cloudflare_plan();
+    let fixture = fixture();
 
-    assert_eq!(
-        plan.upstream_commit,
-        "567aeade7b6e1fbeea98edddb6031c5877678866"
-    );
-    assert_eq!(plan.upstream_version, "v1.12.1");
+    assert_eq!(plan.upstream_commit, fixture.upstream_commit);
+    assert_eq!(plan.upstream_version, fixture.upstream_version);
     assert_eq!(plan.steps, expected_v1_12_1_steps());
+    assert_eq!(
+        plan.steps
+            .iter()
+            .filter_map(|step| match step {
+                MeasurementStep::Latency { packets } => Some(*packets as usize),
+                _ => None,
+            })
+            .sum::<usize>(),
+        fixture.expected_idle_latency_points,
+    );
 }
 
 #[test]
@@ -132,50 +144,10 @@ fn disabling_upload_preserves_the_complete_download_order() {
 }
 
 fn expected_v1_12_1_steps() -> Vec<MeasurementStep> {
-    vec![
-        MeasurementStep::Latency { packets: 2 },
-        download(100_000, 1, true),
-        MeasurementStep::Latency { packets: 20 },
-        download(100_000, 9, false),
-        MeasurementStep::Latency { packets: 2 },
-        download(1_000_000, 8, false),
-        MeasurementStep::Latency { packets: 2 },
-        upload(100_000, 8),
-        MeasurementStep::Latency { packets: 2 },
-        MeasurementStep::PacketLossUnsupported {
-            packets: 1_000,
-            responses_wait_ms: 3_000,
-        },
-        upload(1_000_000, 6),
-        MeasurementStep::Latency { packets: 2 },
-        download(10_000_000, 6, false),
-        MeasurementStep::Latency { packets: 2 },
-        upload(10_000_000, 4),
-        MeasurementStep::Latency { packets: 2 },
-        download(25_000_000, 4, false),
-        MeasurementStep::Latency { packets: 2 },
-        upload(25_000_000, 4),
-        MeasurementStep::Latency { packets: 2 },
-        download(100_000_000, 3, false),
-        MeasurementStep::Latency { packets: 2 },
-        upload(50_000_000, 3),
-        MeasurementStep::Latency { packets: 2 },
-        download(250_000_000, 2, false),
-    ]
-}
-
-fn download(bytes: u64, count: u32, bypass_finish: bool) -> MeasurementStep {
-    MeasurementStep::Download {
-        bytes,
-        count,
-        bypass_finish,
-    }
-}
-
-fn upload(bytes: u64, count: u32) -> MeasurementStep {
-    MeasurementStep::Upload {
-        bytes,
-        count,
-        bypass_finish: false,
-    }
+    fixture()
+        .schedule
+        .iter()
+        .copied()
+        .map(MeasurementStep::from)
+        .collect()
 }

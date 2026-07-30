@@ -1,0 +1,74 @@
+{
+  "upstream_version": "v1.12.1",
+  "upstream_commit": "567aeade7b6e1fbeea98edddb6031c5877678866",
+  "source": "https://github.com/cloudflare/speedtest/tree/v1.12.1",
+  "expected_idle_latency_points": 42,
+  "schedule": [
+    { "type": "latency", "packets": 2 },
+    { "type": "download", "bytes": 100000, "count": 1, "bypass_finish": true },
+    { "type": "latency", "packets": 20 },
+    { "type": "download", "bytes": 100000, "count": 9, "bypass_finish": false },
+    { "type": "latency", "packets": 2 },
+    { "type": "download", "bytes": 1000000, "count": 8, "bypass_finish": false },
+    { "type": "latency", "packets": 2 },
+    { "type": "upload", "bytes": 100000, "count": 8, "bypass_finish": false },
+    { "type": "latency", "packets": 2 },
+    { "type": "packet_loss_unsupported", "packets": 1000, "responses_wait_ms": 3000 },
+    { "type": "upload", "bytes": 1000000, "count": 6, "bypass_finish": false },
+    { "type": "latency", "packets": 2 },
+    { "type": "download", "bytes": 10000000, "count": 6, "bypass_finish": false },
+    { "type": "latency", "packets": 2 },
+    { "type": "upload", "bytes": 10000000, "count": 4, "bypass_finish": false },
+    { "type": "latency", "packets": 2 },
+    { "type": "download", "bytes": 25000000, "count": 4, "bypass_finish": false },
+    { "type": "latency", "packets": 2 },
+    { "type": "upload", "bytes": 25000000, "count": 4, "bypass_finish": false },
+    { "type": "latency", "packets": 2 },
+    { "type": "download", "bytes": 100000000, "count": 3, "bypass_finish": false },
+    { "type": "latency", "packets": 2 },
+    { "type": "upload", "bytes": 50000000, "count": 3, "bypass_finish": false },
+    { "type": "latency", "packets": 2 },
+    { "type": "download", "bytes": 250000000, "count": 2, "bypass_finish": false }
+  ],
+  "constants": {
+    "estimated_server_time_ms": 0.0,
+    "server_time_min_duration_ms": 0.01,
+    "transfer_overhead_factor": 1.005,
+    "latency_percentile": 0.5,
+    "bandwidth_percentile": 0.9,
+    "bandwidth_min_request_duration_ms": 10.0,
+    "loaded_request_min_duration_ms": 250.0,
+    "loaded_latency_throttle_ms": 400,
+    "loaded_latency_max_points": 20,
+    "bandwidth_finish_request_duration_ms": 1000.0
+  },
+  "server_timing_cases": [
+    {
+      "header": "processing;dur=42, cfRequestDuration;dur=157.000065",
+      "expected_ms": 157.000065
+    },
+    {
+      "header": "cfReqDur;dur=2.25",
+      "expected_ms": 2.25
+    },
+    {
+      "header": "cfSpeedDownload;dur=1.25, cfSpeedEdge;dur=2.75",
+      "expected_ms": 4.0
+    },
+    {
+      "header": "processing;dur=99, cache;dur=12",
+      "expected_ms": 0.0
+    },
+    {
+      "header": "cfRequestDuration;dur=0.01, cfSpeedEdge;dur=0.01",
+      "expected_ms": 0.0
+    }
+  ],
+  "reductions": {
+    "latency_points_ms": [10.0, 30.0, 20.0, 40.0],
+    "latency_p50_ms": 25.0,
+    "latency_jitter_ms": 20.0,
+    "bandwidth_points_bps": [100000000.0, 200000000.0, 300000000.0, 400000000.0],
+    "bandwidth_p90_bps": 370000000.0
+  }
+}
