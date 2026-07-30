@@ -2,6 +2,10 @@ use std::time::Duration;
 
 use cfbench::transport::server_timing::server_duration;
 
+mod support;
+
+use support::upstream_v1_12_1::fixture;
+
 #[test]
 fn parses_cloudflare_server_duration() {
     assert_eq!(
@@ -14,7 +18,46 @@ fn parses_cloudflare_server_duration() {
     );
     assert_eq!(
         server_duration(Some("processing;dur=42, cfRequestDuration;dur=157.000065")),
-        Duration::from_millis(42)
+        Duration::from_secs_f64(0.157000065)
+    );
+}
+
+#[test]
+fn matches_pinned_v1_12_1_server_timing_cases() {
+    for case in fixture().server_timing_cases {
+        let actual_ms = server_duration(Some(&case.header)).as_secs_f64() * 1_000.0;
+        assert!(
+            (actual_ms - case.expected_ms).abs() <= 1e-9,
+            "header: {}; expected {} ms, got {actual_ms} ms",
+            case.header,
+            case.expected_ms,
+        );
+    }
+}
+
+#[test]
+fn request_duration_wins_and_speed_phases_are_summed() {
+    assert_eq!(
+        server_duration(Some("cfSpeedDownload;dur=1.25, cfSpeedEdge;dur=2.75")),
+        Duration::from_millis(4)
+    );
+    assert_eq!(
+        server_duration(Some(
+            "cfSpeedDownload;dur=1.25, cfRequestDuration;dur=8.5, cfSpeedEdge;dur=2.75"
+        )),
+        Duration::from_micros(8_500)
+    );
+}
+
+#[test]
+fn unrelated_and_too_small_metrics_fall_back_to_zero() {
+    assert_eq!(
+        server_duration(Some("processing;dur=99, cache;dur=12")),
+        Duration::ZERO
+    );
+    assert_eq!(
+        server_duration(Some("cfRequestDuration;dur=0.01, cfSpeedEdge;dur=0.01")),
+        Duration::ZERO
     );
 }
 
@@ -56,7 +99,7 @@ fn matches_upstream_decimal_prefix_and_combined_header_search() {
         Duration::from_millis(1)
     );
     assert_eq!(
-        server_duration(Some(", processing;dur=6.25")),
+        server_duration(Some(", cfSpeedEdge;dur=6.25")),
         Duration::from_micros(6_250)
     );
 }

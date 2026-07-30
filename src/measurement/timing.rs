@@ -156,10 +156,11 @@ pub fn bandwidth_point(
 
     let server_time = observation.server_time.as_secs_f64();
     let minimum_adjusted = Duration::from_micros((MIN_ADJUSTED_DURATION_MS * 1_000.0) as u64);
-    let adjusted_duration = observation
-        .total
-        .saturating_sub(observation.server_time)
-        .max(minimum_adjusted);
+    let adjusted_duration = match direction {
+        Direction::Download => observation.total.saturating_sub(observation.server_time),
+        Direction::Upload => observation.ttfb,
+    }
+    .max(minimum_adjusted);
     let adjusted = adjusted_duration.as_secs_f64();
     let bps =
         ((observation.payload_bytes as f64 * TRANSFER_OVERHEAD_FACTOR * 8.0) / adjusted).round();

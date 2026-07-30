@@ -204,7 +204,7 @@ async fn download_counts_streamed_bytes_and_rejects_payload_mismatch() {
 }
 
 #[tokio::test]
-async fn later_server_timing_field_is_used_when_first_has_no_duration() {
+async fn combined_server_timing_headers_use_cloudflare_metrics() {
     let server = FixtureServer::start(ResponsePlan::MultiServerTiming).await;
 
     let observation = transport_for(&server, IpMode::V4Only, Duration::from_secs(1))
@@ -212,7 +212,7 @@ async fn later_server_timing_field_is_used_when_first_has_no_duration() {
         .await
         .unwrap();
 
-    assert_eq!(observation.server_time, Duration::from_micros(2_500));
+    assert_eq!(observation.server_time, Duration::from_millis(4));
 }
 
 #[tokio::test]

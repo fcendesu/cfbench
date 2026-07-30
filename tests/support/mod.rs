@@ -1,5 +1,7 @@
 #![allow(dead_code)]
 
+pub mod upstream_v1_12_1;
+
 use std::io;
 use std::net::{Ipv4Addr, SocketAddr};
 use std::sync::Arc;
@@ -246,7 +248,7 @@ async fn serve(mut socket: TcpStream, plan: ResponsePlan, state: FixtureState) -
         ResponsePlan::MultiServerTiming => {
             socket
                 .write_all(
-                    b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nServer-Timing: cache;desc=hit\r\nServer-Timing: cfRequestDuration;dur=2.5\r\n\r\n",
+                    b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nServer-Timing: processing;dur=99\r\nServer-Timing: cfSpeedDownload;dur=1.25\r\nServer-Timing: cfSpeedEdge;dur=2.75\r\n\r\n",
                 )
                 .await?;
         }

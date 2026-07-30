@@ -391,13 +391,7 @@ where
         progress: &ProgressReporter,
         clock: &RunClock,
     ) -> Option<RunnerError> {
-        let initial_phase =
-            packets == 1 && result.raw.initial_latency.is_empty() && result.raw.latency.is_empty();
-        if !initial_phase {
-            result.raw.initial_latency.clear();
-            result.raw.latency.clear();
-            result.raw.latency.reserve(packets as usize);
-        }
+        result.raw.latency.reserve(packets as usize);
 
         for (index, _) in (0..packets).enumerate() {
             let current = progress_counter(index.saturating_add(1));
@@ -442,11 +436,7 @@ where
                 }
             };
             let latency_ms = point.ping_ms;
-            if initial_phase {
-                result.raw.initial_latency.push(point);
-            } else {
-                result.raw.latency.push(point);
-            }
+            result.raw.latency.push(point);
             progress.emit(ProgressEvent::LatencyCompleted {
                 current,
                 total,

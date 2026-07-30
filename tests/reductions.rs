@@ -30,7 +30,7 @@ fn latency(ping_ms: f64) -> LatencyPoint {
 }
 
 #[test]
-fn bandwidth_applies_server_adjustment_and_header_estimate() {
+fn download_uses_total_minus_server_time() {
     let observation = TimingObservation::from_millis(30.0, 210.0, 10.0, 1_000_000, "HTTP/2");
     let point =
         bandwidth_point(Direction::Download, 1_000_000, observation, FIXED_UNIX_MS).unwrap();
@@ -38,6 +38,30 @@ fn bandwidth_applies_server_adjustment_and_header_estimate() {
     assert_eq!(point.adjusted_duration_ms, 200.0);
     assert_eq!(point.bps, 40_200_000);
     assert_eq!(point.payload_bytes, 1_000_000);
+}
+
+#[test]
+fn upload_uses_ttfb_without_subtracting_server_time() {
+    let observation = TimingObservation::from_millis(30.0, 210.0, 10.0, 1_000_000, "HTTP/2");
+    let point = bandwidth_point(Direction::Upload, 1_000_000, observation, FIXED_UNIX_MS).unwrap();
+
+    assert_eq!(point.duration_ms, 210.0);
+    assert_eq!(point.adjusted_duration_ms, 30.0);
+    assert_eq!(point.ping_ms, 20.0);
+    assert_eq!(point.bps, 268_000_000);
+}
+
+#[test]
+fn upload_duration_ignores_trailing_response_body_time() {
+    let fast_body = TimingObservation::from_millis(40.0, 41.0, 5.0, 1_000_000, "HTTP/1.1");
+    let slow_body = TimingObservation::from_millis(40.0, 500.0, 5.0, 1_000_000, "HTTP/1.1");
+
+    let fast = bandwidth_point(Direction::Upload, 1_000_000, fast_body, FIXED_UNIX_MS).unwrap();
+    let slow = bandwidth_point(Direction::Upload, 1_000_000, slow_body, FIXED_UNIX_MS).unwrap();
+
+    assert_eq!(fast.adjusted_duration_ms, 40.0);
+    assert_eq!(slow.adjusted_duration_ms, 40.0);
+    assert_eq!(fast.bps, slow.bps);
 }
 
 #[test]
@@ -64,16 +88,15 @@ fn reducer_filters_short_bandwidth_points() {
 }
 
 #[test]
-fn reducer_uses_later_unloaded_phase_only() {
+fn reducer_uses_all_accumulated_unloaded_points_in_order() {
     let raw = RawResults {
-        initial_latency: vec![latency(500.0)],
-        latency: vec![latency(10.0), latency(20.0)],
+        latency: vec![latency(500.0), latency(10.0), latency(20.0), latency(30.0)],
         ..RawResults::default()
     };
 
     let summary = reduce(&raw);
-    assert_eq!(summary.unloaded_latency_ms, Some(15.0));
-    assert_eq!(summary.unloaded_jitter_ms, Some(10.0));
+    assert_eq!(summary.unloaded_latency_ms, Some(25.0));
+    assert_eq!(summary.unloaded_jitter_ms, Some(170.0));
 }
 
 #[test]
