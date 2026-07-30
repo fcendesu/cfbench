@@ -67,7 +67,7 @@
   "reductions": {
     "latency_points_ms": [10.0, 30.0, 20.0, 40.0],
     "latency_p50_ms": 25.0,
-    "latency_jitter_ms": 20.0,
+    "latency_jitter_ms": 16.666666666666668,
     "bandwidth_points_bps": [100000000.0, 200000000.0, 300000000.0, 400000000.0],
     "bandwidth_p90_bps": 370000000.0
   }
