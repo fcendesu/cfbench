@@ -64,16 +64,15 @@ fn reducer_filters_short_bandwidth_points() {
 }
 
 #[test]
-fn reducer_uses_later_unloaded_phase_only() {
+fn reducer_uses_all_accumulated_unloaded_points_in_order() {
     let raw = RawResults {
-        initial_latency: vec![latency(500.0)],
-        latency: vec![latency(10.0), latency(20.0)],
+        latency: vec![latency(500.0), latency(10.0), latency(20.0), latency(30.0)],
         ..RawResults::default()
     };
 
     let summary = reduce(&raw);
-    assert_eq!(summary.unloaded_latency_ms, Some(15.0));
-    assert_eq!(summary.unloaded_jitter_ms, Some(10.0));
+    assert_eq!(summary.unloaded_latency_ms, Some(25.0));
+    assert_eq!(summary.unloaded_jitter_ms, Some(170.0));
 }
 
 #[test]

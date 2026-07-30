@@ -460,7 +460,7 @@ async fn signal_is_polled_before_runner_starts_network_work() {
     let outcome = run_with_signal(&runner, InstallSignal(installed)).await;
 
     assert!(outcome.error.is_none());
-    assert_eq!(outcome.result.raw.initial_latency.len(), 1);
+    assert_eq!(outcome.result.raw.latency.len(), 1);
 }
 
 #[tokio::test]
@@ -482,7 +482,7 @@ async fn selected_signal_forces_terminal_outcome_after_concurrent_final_success(
         outcome.error,
         Some(RunnerError::Cancelled { ref stage }) if stage == "run"
     ));
-    assert_eq!(outcome.result.raw.initial_latency.len(), 1);
+    assert_eq!(outcome.result.raw.latency.len(), 1);
     assert_eq!(outcome.result.failures.len(), 1);
     assert!(
         outcome

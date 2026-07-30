@@ -17,6 +17,10 @@ use cfbench::runner::{
     MeasurementFuture, MeasurementTransport, MetadataFuture, RpkiFuture, Runner, RunnerError,
 };
 
+mod support;
+
+use support::upstream_v1_12_1::{FixtureStep, fixture};
+
 #[derive(Clone)]
 struct ScriptedTransport {
     script: Arc<Mutex<VecDeque<Result<TimingObservation, TransportError>>>>,
@@ -300,7 +304,7 @@ async fn direct_run_reconciles_parent_cancellation_after_final_success_and_skips
         outcome.error,
         Some(RunnerError::Cancelled { ref stage }) if stage == "run"
     ));
-    assert_eq!(outcome.result.raw.initial_latency.len(), 1);
+    assert_eq!(outcome.result.raw.latency.len(), 1);
     assert_eq!(
         outcome.result.failures,
         ["measurement cancelled during run"]
@@ -329,7 +333,7 @@ async fn direct_run_with_progress_reconciles_final_cancellation_and_keeps_the_po
         outcome.error,
         Some(RunnerError::Cancelled { ref stage }) if stage == "run"
     ));
-    assert_eq!(outcome.result.raw.initial_latency.len(), 1);
+    assert_eq!(outcome.result.raw.latency.len(), 1);
     assert_eq!(outcome.result.failures.len(), 1);
     assert_eq!(
         events,
@@ -435,7 +439,7 @@ async fn metadata_runs_once_after_the_exact_plan_without_affecting_usage_or_summ
         MetadataStatus::Available
     );
     assert_eq!(outcome.result.target.metadata, Some(metadata_fixture()));
-    assert_eq!(outcome.result.raw.initial_latency.len(), 1);
+    assert_eq!(outcome.result.raw.latency.len(), 1);
     assert_eq!(outcome.result.raw.download.len(), 1);
     assert_eq!(outcome.result.raw.upload.len(), 1);
     assert!(outcome.result.summary.download_bps.is_some());
@@ -744,7 +748,7 @@ async fn cancellation_during_metadata_supersedes_a_prior_measurement_error_termi
         outcome.error,
         Some(RunnerError::Cancelled { ref stage }) if stage == "metadata"
     ));
-    assert_eq!(outcome.result.raw.initial_latency.len(), 1);
+    assert_eq!(outcome.result.raw.latency.len(), 1);
     assert_eq!(outcome.result.usage.download_payload_bytes, 25_000);
     assert_eq!(outcome.result.failures.len(), 2);
     assert!(outcome.result.failures[0].contains("during download"));
@@ -988,34 +992,40 @@ async fn bypass_and_direction_finish_states_are_independent() {
 }
 
 #[tokio::test]
-async fn later_latency_phase_replaces_initial_estimate() {
-    let observations = (0..21).map(|index| {
+async fn every_v1_12_1_idle_latency_phase_accumulates_in_measurement_order() {
+    let fixture = fixture();
+    let latency_steps = fixture
+        .schedule
+        .iter()
+        .filter_map(|step| match step {
+            FixtureStep::Latency { packets } => {
+                Some(MeasurementStep::Latency { packets: *packets })
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    let observations = (0..fixture.expected_idle_latency_points).map(|index| {
         Ok(TimingObservation::from_millis(
-            20.0 + f64::from(index),
-            30.0,
-            10.0,
+            11.0 + index as f64,
+            11.0 + index as f64,
+            1.0,
             0,
             "HTTP/1.1",
         ))
     });
-    let outcome = Runner::new(
-        ScriptedTransport::new(observations),
-        plan(vec![
-            MeasurementStep::Latency { packets: 1 },
-            MeasurementStep::PacketLossUnsupported {
-                packets: 1000,
-                responses_wait_ms: 3000,
-            },
-            MeasurementStep::Latency { packets: 20 },
-        ]),
-    )
-    .with_loaded_latency(false)
-    .run(&CancellationToken::new())
-    .await;
 
-    assert!(outcome.result.raw.initial_latency.is_empty());
-    assert_eq!(outcome.result.raw.latency.len(), 20);
-    assert_eq!(outcome.result.raw.latency[0].ping_ms, 11.0);
+    let outcome = Runner::new(ScriptedTransport::new(observations), plan(latency_steps))
+        .with_loaded_latency(false)
+        .run(&CancellationToken::new())
+        .await;
+
+    assert!(outcome.error.is_none());
+    assert_eq!(
+        outcome.result.raw.latency.len(),
+        fixture.expected_idle_latency_points
+    );
+    assert_eq!(outcome.result.raw.latency.first().unwrap().ping_ms, 10.0);
+    assert_eq!(outcome.result.raw.latency.last().unwrap().ping_ms, 51.0);
 }
 
 #[tokio::test]
@@ -1048,7 +1058,7 @@ async fn failed_later_stage_preserves_completed_points() {
     .await;
 
     assert!(matches!(outcome.error, Some(RunnerError::Transport { .. })));
-    assert_eq!(outcome.result.raw.initial_latency.len(), 1);
+    assert_eq!(outcome.result.raw.latency.len(), 1);
     assert_eq!(outcome.result.raw.download.len(), 1);
     assert_eq!(outcome.result.usage.download_payload_bytes, 125_000);
     assert_eq!(outcome.result.failures.len(), 1);
@@ -1071,7 +1081,7 @@ async fn successful_transfer_usage_is_not_double_counted() {
 }
 
 #[tokio::test]
-async fn failed_twenty_packet_phase_keeps_completed_replacement_points() {
+async fn failed_later_latency_phase_keeps_all_completed_points_in_order() {
     let transport = ScriptedTransport::new([
         Ok(TimingObservation::from_millis(
             20.0, 20.0, 10.0, 0, "HTTP/1.1",
@@ -1095,9 +1105,18 @@ async fn failed_twenty_packet_phase_keeps_completed_replacement_points() {
     .run(&CancellationToken::new())
     .await;
 
-    assert!(outcome.result.raw.initial_latency.is_empty());
-    assert_eq!(outcome.result.raw.latency.len(), 1);
-    assert_eq!(outcome.result.raw.latency[0].ping_ms, 20.0);
+    assert_eq!(
+        outcome
+            .result
+            .raw
+            .latency
+            .iter()
+            .map(|point| point.ping_ms)
+            .collect::<Vec<_>>(),
+        [10.0, 20.0]
+    );
+    assert_eq!(outcome.result.raw.latency[0].ping_ms, 10.0);
+    assert_eq!(outcome.result.raw.latency[1].ping_ms, 20.0);
 }
 
 #[tokio::test]
@@ -1136,7 +1155,16 @@ async fn progress_reports_only_accepted_points_with_phase_local_counters() {
     let events: Vec<_> = receiver.into_iter().collect();
 
     assert!(outcome.error.is_none());
-    assert_eq!(outcome.result.raw.latency.len(), 2);
+    assert_eq!(
+        outcome
+            .result
+            .raw
+            .latency
+            .iter()
+            .map(|point| point.ping_ms)
+            .collect::<Vec<_>>(),
+        [10.0, 20.0, 21.0]
+    );
     assert_eq!(outcome.result.raw.download.len(), 3);
     assert_eq!(
         events,

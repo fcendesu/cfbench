@@ -95,9 +95,6 @@ impl FromIterator<LatencyPoint> for LoadedLatencyPoints {
 /// Raw successful points retained by a run.
 #[derive(Clone, Debug, Default, Serialize)]
 pub struct RawResults {
-    /// The first estimate is private to orchestration and not part of public points.
-    #[serde(skip_serializing)]
-    pub initial_latency: Vec<LatencyPoint>,
     pub latency: Vec<LatencyPoint>,
     pub download: Vec<BandwidthPoint>,
     pub upload: Vec<BandwidthPoint>,
