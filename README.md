@@ -57,7 +57,7 @@ Testing against Cloudflare edge...
 [download 100 KB 1/1] 71.25 Mbps — 11.2 ms
 ...
 
-cfbench 0.3.0
+cfbench 0.3.1
 Target: Cloudflare edge
 Protocol: IPv6 / HTTP/1.1
 Measured at: 2026-07-26T12:00:00.000Z

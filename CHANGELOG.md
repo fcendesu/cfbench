@@ -7,6 +7,22 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-07-31
+
+### Fixed
+
+- Idle latency and jitter now use every successful v1.12.1 latency phase instead
+  of replacing earlier phases with the latest pair of probes.
+- Cloudflare server processing time now follows the v1.12.1
+  `cfRequestDuration` and `cfSpeed*` selection rules.
+- Upload bandwidth, loaded-latency eligibility, and adaptive stopping now use
+  Cloudflare's TTFB-based upload duration.
+
+### Testing
+
+- Added a pinned offline Cloudflare Speedtest v1.12.1 conformance fixture for
+  the measurement schedule, constants, parsing, accumulation, and reductions.
+
 ## [0.3.0] - 2026-07-29
 
 ### Changed
@@ -78,7 +94,8 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 - The installer validates the selected release artifact against its published SHA-256 checksum before installation.
 
-[Unreleased]: https://github.com/fcendesu/cfbench/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/fcendesu/cfbench/compare/v0.3.1...HEAD
+[0.3.1]: https://github.com/fcendesu/cfbench/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/fcendesu/cfbench/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/fcendesu/cfbench/compare/v0.1.2...v0.2.0
 [0.1.2]: https://github.com/fcendesu/cfbench/compare/v0.1.1...v0.1.2
