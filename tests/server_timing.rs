@@ -4,7 +4,7 @@ use cfbench::transport::server_timing::server_duration;
 
 mod support;
 
-use support::upstream_v1_12_1::fixture;
+use support::upstream_v1_13_0::fixture;
 
 #[test]
 fn parses_cloudflare_server_duration() {
@@ -23,7 +23,7 @@ fn parses_cloudflare_server_duration() {
 }
 
 #[test]
-fn matches_pinned_v1_12_1_server_timing_cases() {
+fn matches_pinned_v1_13_0_server_timing_cases() {
     for case in fixture().server_timing_cases {
         let actual_ms = server_duration(Some(&case.header)).as_secs_f64() * 1_000.0;
         assert!(

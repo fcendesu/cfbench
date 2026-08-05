@@ -7,6 +7,22 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-08-05
+
+### Compatibility
+
+- Updated the declared Cloudflare Speedtest baseline to v1.13.0, commit
+  `5954dee4cc83548a9e5031140df4548f71cd1458`.
+- Confirmed that v1.13.0 leaves the request schedule, timing formulas,
+  thresholds, reductions, and loaded-latency behavior unchanged.
+- Documented upstream's optional `authorizationToken` customer-attribution
+  capability, which cfbench does not expose or send.
+
+### Testing
+
+- Updated the pinned offline conformance fixture to v1.13.0 while preserving
+  every measurement schedule entry and numeric compatibility vector.
+
 ## [0.3.1] - 2026-07-31
 
 ### Fixed
@@ -94,7 +110,8 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 - The installer validates the selected release artifact against its published SHA-256 checksum before installation.
 
-[Unreleased]: https://github.com/fcendesu/cfbench/compare/v0.3.1...HEAD
+[Unreleased]: https://github.com/fcendesu/cfbench/compare/v0.3.2...HEAD
+[0.3.2]: https://github.com/fcendesu/cfbench/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/fcendesu/cfbench/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/fcendesu/cfbench/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/fcendesu/cfbench/compare/v0.1.2...v0.2.0

@@ -5,7 +5,7 @@ use cfbench::plan::{Direction, MeasurementStep, default_cloudflare_plan};
 
 mod support;
 
-use support::upstream_v1_12_1::fixture;
+use support::upstream_v1_13_0::fixture;
 
 #[test]
 fn compatibility_document_uses_the_shared_upstream_baseline() {
@@ -25,11 +25,11 @@ fn compatibility_document_explains_the_informational_rpki_check() {
 #[test]
 fn installation_document_uses_the_current_release_version() {
     let document = std::fs::read_to_string("docs/INSTALLATION.md").unwrap();
-    assert!(!document.contains("0.3.0"));
-    assert!(document.contains("CFBENCH_VERSION=0.3.1"));
-    assert!(document.contains("cfbench-v0.3.1-SHA256SUMS.txt"));
-    assert!(document.contains("cfbench_0.3.1-1_amd64.deb"));
-    assert!(document.contains("cfbench-0.3.1-1.x86_64.rpm"));
+    assert!(!document.contains("0.3.1"));
+    assert!(document.contains("CFBENCH_VERSION=0.3.2"));
+    assert!(document.contains("cfbench-v0.3.2-SHA256SUMS.txt"));
+    assert!(document.contains("cfbench_0.3.2-1_amd64.deb"));
+    assert!(document.contains("cfbench-0.3.2-1.x86_64.rpm"));
 }
 
 #[test]
@@ -62,13 +62,13 @@ fn public_docs_define_silent_quiet_and_distinct_exit_codes() {
 }
 
 #[test]
-fn upstream_plan_matches_v1_12_1() {
+fn upstream_plan_matches_v1_13_0() {
     let plan = default_cloudflare_plan();
     let fixture = fixture();
 
     assert_eq!(plan.upstream_commit, fixture.upstream_commit);
     assert_eq!(plan.upstream_version, fixture.upstream_version);
-    assert_eq!(plan.steps, expected_v1_12_1_steps());
+    assert_eq!(plan.steps, expected_v1_13_0_steps());
     assert_eq!(
         plan.steps
             .iter()
@@ -82,7 +82,7 @@ fn upstream_plan_matches_v1_12_1() {
 }
 
 #[test]
-fn v1_12_1_interleaves_two_packet_latency_steps_between_transfer_groups() {
+fn v1_13_0_interleaves_two_packet_latency_steps_between_transfer_groups() {
     let plan = default_cloudflare_plan();
     let two_packet_latencies: Vec<_> = plan
         .steps
@@ -121,7 +121,7 @@ fn filtering_disabled_directions_retains_every_non_transfer_step_in_order() {
         ..RunConfig::default()
     });
 
-    let expected: Vec<_> = expected_v1_12_1_steps()
+    let expected: Vec<_> = expected_v1_13_0_steps()
         .into_iter()
         .filter(|step| step.direction().is_none())
         .collect();
@@ -135,7 +135,7 @@ fn disabling_download_preserves_the_complete_upload_order() {
         ..RunConfig::default()
     });
 
-    let expected: Vec<_> = expected_v1_12_1_steps()
+    let expected: Vec<_> = expected_v1_13_0_steps()
         .into_iter()
         .filter(|step| step.direction() != Some(Direction::Download))
         .collect();
@@ -149,14 +149,14 @@ fn disabling_upload_preserves_the_complete_download_order() {
         ..RunConfig::default()
     });
 
-    let expected: Vec<_> = expected_v1_12_1_steps()
+    let expected: Vec<_> = expected_v1_13_0_steps()
         .into_iter()
         .filter(|step| step.direction() != Some(Direction::Upload))
         .collect();
     assert_eq!(filtered.steps, expected);
 }
 
-fn expected_v1_12_1_steps() -> Vec<MeasurementStep> {
+fn expected_v1_13_0_steps() -> Vec<MeasurementStep> {
     fixture()
         .schedule
         .iter()
