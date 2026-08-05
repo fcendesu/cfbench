@@ -99,7 +99,7 @@ pub struct ReductionCases {
 
 pub fn fixture() -> UpstreamFixture {
     serde_json::from_str(include_str!(
-        "../fixtures/cloudflare-speedtest-v1.12.1.json"
+        "../fixtures/cloudflare-speedtest-v1.13.0.json"
     ))
     .expect("pinned Cloudflare Speedtest fixture is valid")
 }

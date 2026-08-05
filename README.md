@@ -92,7 +92,7 @@ Packet loss is deliberately not displayed or measured. Cloudflare's metric requi
 
 ## Compatibility
 
-cfbench follows Cloudflare Speedtest `v1.12.1` for its request order, payload sizes, thresholds, percentile reductions, and loaded-latency rules. Native Rust timing cannot exactly reproduce the browser's `PerformanceResourceTiming` boundaries or browser-only TCP connection calibration, so results are methodology-compatible rather than numerically identical.
+cfbench follows Cloudflare Speedtest `v1.13.0` for its request order, payload sizes, thresholds, percentile reductions, and loaded-latency rules. v1.13.0 leaves that measurement methodology unchanged and adds an optional customer-attribution token that cfbench does not expose. Native Rust timing cannot exactly reproduce the browser's `PerformanceResourceTiming` boundaries or browser-only TCP connection calibration, so results are methodology-compatible rather than numerically identical.
 
 See [installation details](docs/INSTALLATION.md) and [measurement compatibility](docs/COMPATIBILITY.md).
 

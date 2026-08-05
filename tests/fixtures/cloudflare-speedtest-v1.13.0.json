@@ -1,7 +1,16 @@
 {
-  "upstream_version": "v1.12.1",
-  "upstream_commit": "567aeade7b6e1fbeea98edddb6031c5877678866",
-  "source": "https://github.com/cloudflare/speedtest/tree/v1.12.1",
+  "upstream_version": "v1.13.0",
+  "upstream_commit": "5954dee4cc83548a9e5031140df4548f71cd1458",
+  "source": "https://github.com/cloudflare/speedtest/tree/v1.13.0",
+  "authorization_token": {
+    "option": "authorizationToken",
+    "query_parameter": "jwt",
+    "default": null,
+    "https_only": true,
+    "cfbench_relevant_endpoints": ["download", "upload"],
+    "cfbench_excluded_endpoints": ["metadata", "rpki"],
+    "exposed_by_cfbench": false
+  },
   "expected_idle_latency_points": 42,
   "schedule": [
     { "type": "latency", "packets": 2 },
