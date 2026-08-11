@@ -158,9 +158,9 @@ fn disabling_upload_preserves_the_complete_download_order() {
 
 #[test]
 fn dependabot_updates_use_the_deterministic_weekly_schedule() {
-    let config = include_str!("../.github/dependabot.yml");
+    let config = include_str!("../.github/dependabot.yml").replace("\r\n", "\n");
 
-    assert_dependabot_schedule(config);
+    assert_dependabot_schedule(&config);
     assert_dependabot_schedule(&config.replace('\n', "\r\n"));
 }
 
