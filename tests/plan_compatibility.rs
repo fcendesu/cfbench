@@ -156,6 +156,29 @@ fn disabling_upload_preserves_the_complete_download_order() {
     assert_eq!(filtered.steps, expected);
 }
 
+#[test]
+fn dependabot_updates_use_the_deterministic_weekly_schedule() {
+    let config = include_str!("../.github/dependabot.yml").replace("\r\n", "\n");
+
+    assert_dependabot_schedule(&config);
+    assert_dependabot_schedule(&config.replace('\n', "\r\n"));
+}
+
+fn assert_dependabot_schedule(config: &str) {
+    let normalized = config.replace("\r\n", "\n");
+    let updater_blocks: Vec<_> = normalized
+        .split("\n  - package-ecosystem: ")
+        .skip(1)
+        .collect();
+    let expected_schedule = "    schedule:\n      interval: weekly\n      day: monday\n      time: \"06:00\"\n      timezone: Europe/Istanbul";
+
+    assert_eq!(updater_blocks.len(), 2);
+    for (block, ecosystem) in updater_blocks.iter().zip(["cargo", "github-actions"]) {
+        assert!(block.starts_with(ecosystem));
+        assert!(block.contains(expected_schedule));
+    }
+}
+
 fn expected_v1_13_0_steps() -> Vec<MeasurementStep> {
     fixture()
         .schedule
