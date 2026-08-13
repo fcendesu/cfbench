@@ -62,6 +62,23 @@ fn public_docs_define_silent_quiet_and_distinct_exit_codes() {
 }
 
 #[test]
+fn public_docs_define_dynamic_terminal_progress_without_a_tui() {
+    let readme = std::fs::read_to_string("README.md").unwrap();
+    let compatibility = std::fs::read_to_string("docs/COMPATIBILITY.md").unwrap();
+
+    for document in [&readme, &compatibility] {
+        let normalized = document.split_whitespace().collect::<Vec<_>>().join(" ");
+        assert!(normalized.contains("interactive terminal"));
+        assert!(normalized.contains("`--verbose`"));
+        assert!(normalized.contains("redirected"));
+        assert!(normalized.contains("`--json`"));
+        assert!(normalized.contains("`--quiet`"));
+    }
+    assert!(readme.contains("single-line"));
+    assert!(!readme.to_ascii_lowercase().contains("full-screen tui"));
+}
+
+#[test]
 fn upstream_plan_matches_v1_13_0() {
     let plan = default_cloudflare_plan();
     let fixture = fixture();
