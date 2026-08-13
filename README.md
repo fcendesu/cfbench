@@ -39,7 +39,22 @@ cfbench --quiet --timeout 60
 
 Run `cfbench --help` for the complete option list. Progress and diagnostics use stderr.
 
-On an interactive terminal, ordinary text mode shows one transient, single-line progress indicator and clears it before the final summary. `--verbose` prints permanent per-request lines instead. For redirected default output and in `--json` and `--quiet` modes, dynamic progress is not emitted.
+On an interactive terminal, ordinary text mode shows one transient, single-line compact progress indicator and clears it before the final summary. During a transfer it can look like:
+
+```text
+⠹ Download 100 MB 1/3 · 642 Mbps · 63% · loaded 32.4 ms
+```
+
+The Mbps figure is a provisional recent-window display, and the percentage is
+for the current request rather than the whole run. Compact mode also shows
+running latency/jitter as latency observations arrive; `loaded` is the latest
+direction-local loaded-latency probe. Final p90/median reductions remain
+authoritative. The upload live rate is transport-consumption feedback from the
+request body stream, not a completed upload bandwidth result.
+
+`--verbose` prints permanent per-request lines instead. For redirected default
+output and in `--json` and `--quiet` modes, dynamic progress is not emitted;
+their behavior is unchanged.
 
 For automation, `--json` emits one schema-v1 document, while `--quiet` emits no
 normal output and reports the outcome through its exit status. A complete quiet

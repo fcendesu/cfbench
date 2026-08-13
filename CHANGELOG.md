@@ -9,7 +9,11 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ### Added
 
-- Interactive terminal runs now show a lightweight, single-line dynamic progress spinner; `--verbose` retains permanent per-request lines and automation output remains unchanged.
+- Interactive terminal runs now show compact, single-line live telemetry for
+  provisional transfer throughput and current-request percentage, running
+  latency/jitter, and direction-local loaded latency; final reductions remain
+  authoritative. `--verbose` retains permanent per-request lines and
+  automation output remains unchanged.
 
 ## [0.3.2] - 2026-08-05
 
