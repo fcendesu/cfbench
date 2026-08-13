@@ -1,4 +1,4 @@
-use cfbench::output::{render_compact_progress, render_progress};
+use cfbench::output::{CompactProgressState, render_progress};
 use cfbench::plan::Direction;
 use cfbench::progress::{ProgressEvent, ProgressFailureKind, ProgressReporter, ProgressStage};
 
@@ -18,94 +18,209 @@ fn formats_individual_transfer_progress_without_terminal_control() {
 }
 
 #[test]
-fn compact_progress_formats_primary_request_lifecycle() {
-    let cases = [
-        (
-            ProgressEvent::RequestStarted {
-                stage: ProgressStage::Latency,
-                current: Some(2),
-                total: Some(20),
+fn compact_state_renders_live_transfer_telemetry_for_the_active_direction() {
+    let mut state = CompactProgressState::default();
+    assert_eq!(
+        state.render(&ProgressEvent::RequestStarted {
+            stage: ProgressStage::Transfer {
+                direction: Direction::Download,
+                requested_bytes: 100_000_000,
             },
-            Some("Latency 2/20"),
-        ),
-        (
-            ProgressEvent::LatencyCompleted {
-                current: 2,
-                total: 20,
-                latency_ms: 12.4,
-            },
-            Some("Latency 2/20 - 12.40 ms"),
-        ),
-        (
-            ProgressEvent::RequestStarted {
-                stage: ProgressStage::Transfer {
-                    direction: Direction::Download,
-                    requested_bytes: 100_000_000,
-                },
-                current: Some(2),
-                total: Some(3),
-            },
-            Some("Download 100 MB 2/3"),
-        ),
-        (
-            ProgressEvent::TransferCompleted {
-                direction: Direction::Upload,
-                requested_bytes: 50_000_000,
-                current: 1,
-                total: 3,
-                bps: 216_900_000,
-                adjusted_duration_ms: 1_200.0,
-            },
-            Some("Upload 50 MB 1/3 - 216.90 Mbps"),
-        ),
-    ];
+            current: Some(1),
+            total: Some(3),
+        }),
+        Some("Download 100 MB 1/3 · 0%".to_owned()),
+    );
 
-    for (event, expected) in cases {
-        let actual = render_compact_progress(&event);
-        assert_eq!(actual.as_deref(), expected);
-        assert!(!actual.unwrap().contains(['\r', '\u{1b}']));
-    }
-}
-
-#[test]
-fn compact_progress_keeps_loaded_latency_events_out_of_active_display() {
-    let events = [
-        ProgressEvent::LoadedLatencyCompleted {
+    let snapshot = ProgressEvent::TransferAdvanced {
+        direction: Direction::Download,
+        requested_bytes: 100_000_000,
+        current: 1,
+        total: 3,
+        transferred_bytes: 63_000_000,
+        window_bytes: 20_062_500,
+        window_duration_ms: 250.0,
+    };
+    assert_eq!(
+        state.render(&snapshot),
+        Some("Download 100 MB 1/3 · 642 Mbps · 63%".to_owned()),
+    );
+    assert_eq!(
+        state.render(&ProgressEvent::LoadedLatencyCompleted {
             direction: Direction::Download,
             sequence: 4,
-            latency_ms: 12.4,
-        },
-        ProgressEvent::RequestFailed {
-            stage: ProgressStage::LoadedLatency {
-                direction: Direction::Download,
-            },
-            current: None,
-            total: None,
-            kind: ProgressFailureKind::Timeout,
-        },
-    ];
-
-    for event in events {
-        assert_eq!(render_compact_progress(&event), None);
-    }
+            latency_ms: 32.4,
+        }),
+        Some("Download 100 MB 1/3 · 642 Mbps · 63% · loaded 32.4 ms".to_owned()),
+    );
+    assert_eq!(
+        state.render(&ProgressEvent::LoadedLatencyCompleted {
+            direction: Direction::Upload,
+            sequence: 1,
+            latency_ms: 18.6,
+        }),
+        None,
+    );
+    assert_eq!(
+        state.render(&snapshot),
+        Some("Download 100 MB 1/3 · 642 Mbps · 63% · loaded 32.4 ms".to_owned()),
+    );
 }
 
 #[test]
-fn compact_progress_formats_only_safe_request_failure_categories() {
-    let rendered = render_compact_progress(&ProgressEvent::RequestFailed {
+fn compact_state_accumulates_latency_jitter_across_counter_resets() {
+    let mut state = CompactProgressState::default();
+    assert_eq!(
+        state.render(&ProgressEvent::LatencyCompleted {
+            current: 1,
+            total: 20,
+            latency_ms: 20.0,
+        }),
+        Some("Latency 1/20 · 20.0 ms".to_owned()),
+    );
+    state.render(&ProgressEvent::LatencyCompleted {
+        current: 2,
+        total: 20,
+        latency_ms: 24.0,
+    });
+    assert_eq!(
+        state.render(&ProgressEvent::LatencyCompleted {
+            current: 3,
+            total: 20,
+            latency_ms: 22.0,
+        }),
+        Some("Latency 3/20 · 22.0 ms · jitter 3.0 ms".to_owned()),
+    );
+
+    state.render(&ProgressEvent::RequestStarted {
+        stage: ProgressStage::Latency,
+        current: Some(1),
+        total: Some(2),
+    });
+    assert_eq!(
+        state.render(&ProgressEvent::LatencyCompleted {
+            current: 1,
+            total: 2,
+            latency_ms: 26.0,
+        }),
+        Some("Latency 1/2 · 26.0 ms · jitter 3.3 ms".to_owned()),
+    );
+}
+
+#[test]
+fn compact_state_rejects_invalid_transfer_telemetry_and_finishes_authoritatively() {
+    let mut state = CompactProgressState::default();
+    state.render(&ProgressEvent::RequestStarted {
+        stage: ProgressStage::Transfer {
+            direction: Direction::Download,
+            requested_bytes: 1_000_000,
+        },
+        current: Some(1),
+        total: Some(1),
+    });
+
+    for event in [
+        ProgressEvent::TransferAdvanced {
+            direction: Direction::Download,
+            requested_bytes: 1_000_000,
+            current: 1,
+            total: 1,
+            transferred_bytes: 500_000,
+            window_bytes: 250_000,
+            window_duration_ms: 0.0,
+        },
+        ProgressEvent::TransferAdvanced {
+            direction: Direction::Download,
+            requested_bytes: 1_000_000,
+            current: 1,
+            total: 1,
+            transferred_bytes: 500_000,
+            window_bytes: 500_001,
+            window_duration_ms: 20.0,
+        },
+        ProgressEvent::TransferAdvanced {
+            direction: Direction::Download,
+            requested_bytes: 1_000_000,
+            current: 1,
+            total: 1,
+            transferred_bytes: 1_000_001,
+            window_bytes: 250_000,
+            window_duration_ms: 20.0,
+        },
+    ] {
+        assert_eq!(state.render(&event), None);
+    }
+
+    assert_eq!(
+        state.render(&ProgressEvent::TransferAdvanced {
+            direction: Direction::Download,
+            requested_bytes: 1_000_000,
+            current: 1,
+            total: 1,
+            transferred_bytes: 500_000,
+            window_bytes: 250_000,
+            window_duration_ms: 20.0,
+        }),
+        Some("Download 1 MB 1/1 · 100 Mbps · 50%".to_owned()),
+    );
+    assert_eq!(
+        state.render(&ProgressEvent::TransferCompleted {
+            direction: Direction::Download,
+            requested_bytes: 1_000_000,
+            current: 1,
+            total: 1,
+            bps: 91_420_000,
+            adjusted_duration_ms: 87.5,
+        }),
+        Some("Download 1 MB 1/1 · 91.4 Mbps · 100%".to_owned()),
+    );
+    assert_eq!(
+        state.render(&ProgressEvent::LoadedLatencyCompleted {
+            direction: Direction::Download,
+            sequence: 5,
+            latency_ms: 21.0,
+        }),
+        None,
+    );
+}
+
+#[test]
+fn compact_state_clears_matching_primary_failure_and_ignores_loaded_failures() {
+    let mut state = CompactProgressState::default();
+    state.render(&ProgressEvent::RequestStarted {
         stage: ProgressStage::Transfer {
             direction: Direction::Upload,
             requested_bytes: 50_000_000,
         },
         current: Some(1),
         total: Some(3),
-        kind: ProgressFailureKind::Timeout,
-    })
-    .expect("request failures retain the safe failure category");
+    });
+    let rendered = state
+        .render(&ProgressEvent::RequestFailed {
+            stage: ProgressStage::Transfer {
+                direction: Direction::Upload,
+                requested_bytes: 50_000_000,
+            },
+            current: Some(1),
+            total: Some(3),
+            kind: ProgressFailureKind::Timeout,
+        })
+        .expect("request failures retain the safe failure category");
 
-    assert_eq!(rendered, "Upload 50 MB 1/3 - failed: timeout");
+    assert_eq!(rendered, "Upload 50 MB 1/3 · failed: timeout");
     assert!(!rendered.contains("fixture.invalid"));
     assert!(!rendered.contains("https://"));
+    assert_eq!(
+        state.render(&ProgressEvent::RequestFailed {
+            stage: ProgressStage::LoadedLatency {
+                direction: Direction::Upload,
+            },
+            current: None,
+            total: None,
+            kind: ProgressFailureKind::Timeout,
+        }),
+        None,
+    );
 }
 
 #[test]

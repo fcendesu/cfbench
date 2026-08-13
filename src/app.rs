@@ -10,7 +10,7 @@ use thiserror::Error;
 
 use crate::cancellation::CancellationToken;
 use crate::error::OutputError;
-use crate::output::{render_compact_progress, render_json, render_progress, render_text};
+use crate::output::{CompactProgressState, render_json, render_progress, render_text};
 use crate::progress::{ProgressEvent, ProgressReporter};
 use crate::runner::{MeasurementTransport, RunOutcome, Runner, RunnerError};
 
@@ -259,8 +259,9 @@ pub fn spawn_compact_progress_renderer(
             );
             spinner.set_message(OPENING_PROGRESS_LINE);
             spinner.enable_steady_tick(COMPACT_TICK);
+            let mut state = CompactProgressState::default();
             for event in receiver {
-                if let Some(message) = render_compact_progress(&event) {
+                if let Some(message) = state.render(&event) {
                     spinner.set_message(message);
                 }
             }
@@ -321,7 +322,10 @@ where
 {
     write_progress_line(&mut writer, OPENING_PROGRESS_LINE)?;
     for event in receiver {
-        if matches!(event, ProgressEvent::RequestStarted { .. }) {
+        if matches!(
+            event,
+            ProgressEvent::RequestStarted { .. } | ProgressEvent::TransferAdvanced { .. }
+        ) {
             continue;
         }
         write_progress_line(&mut writer, &render_progress(&event))?;

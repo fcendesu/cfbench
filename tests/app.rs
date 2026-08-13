@@ -180,8 +180,44 @@ async fn compact_renderer_panic_does_not_change_outcome_or_exit_status() {
     assert_eq!(exit_status(&run.outcome), EXIT_COMPLETE);
 }
 
+#[tokio::test]
+async fn compact_telemetry_renderer_draw_failure_does_not_change_outcome_or_exit_status() {
+    let options = OutputOptions {
+        json: false,
+        quiet: false,
+        verbose: false,
+    };
+    let runner = Runner::new(
+        ImmediateLatencyTransport,
+        MeasurementPlan {
+            upstream_version: "test",
+            upstream_commit: "test",
+            steps: vec![MeasurementStep::Latency { packets: 2 }],
+        },
+    )
+    .with_loaded_latency(false);
+    let draw_failed = Arc::new(AtomicBool::new(false));
+
+    let run = run_with_signal_and_progress_with_compact_draw_target(
+        &runner,
+        std::future::pending::<std::io::Result<()>>(),
+        options,
+        SharedWriter::default(),
+        indicatif::ProgressDrawTarget::term_like(Box::new(RecordingTerm::failing(
+            draw_failed.clone(),
+        ))),
+    )
+    .await;
+
+    assert!(draw_failed.load(Ordering::SeqCst));
+    assert!(run.progress_error.is_none());
+    assert!(run.outcome.error.is_none());
+    assert_eq!(run.outcome.result.raw.latency.len(), 2);
+    assert_eq!(exit_status(&run.outcome), EXIT_COMPLETE);
+}
+
 #[test]
-fn compact_renderer_draws_one_status_and_clears_without_permanent_history() {
+fn compact_telemetry_renderer_replaces_one_status_and_clears_on_channel_closure() {
     let terminal = RecordingTerm::default();
     let operations = terminal.operations.clone();
     let (reporter, receiver) = ProgressReporter::channel(2);
@@ -192,26 +228,129 @@ fn compact_renderer_draws_one_status_and_clears_without_permanent_history() {
     .unwrap();
 
     reporter.emit(ProgressEvent::RequestStarted {
-        stage: ProgressStage::Latency,
+        stage: ProgressStage::Transfer {
+            direction: cfbench::plan::Direction::Download,
+            requested_bytes: 100_000_000,
+        },
         current: Some(1),
-        total: Some(1),
+        total: Some(3),
     });
-    reporter.emit(ProgressEvent::LatencyCompleted {
+    reporter.emit(ProgressEvent::TransferAdvanced {
+        direction: cfbench::plan::Direction::Download,
+        requested_bytes: 100_000_000,
         current: 1,
-        total: 1,
-        latency_ms: 12.5,
+        total: 3,
+        transferred_bytes: 63_000_000,
+        window_bytes: 20_062_500,
+        window_duration_ms: 250.0,
     });
     drop(reporter);
     renderer.join().unwrap();
 
     let operations = operations.lock().unwrap();
-    assert!(operations.iter().any(
-        |operation| matches!(operation, TerminalOperation::Draw(text) if text.contains("Latency 1/1"))
-    ));
+    assert!(operations.iter().any(|operation| {
+        matches!(operation, TerminalOperation::Draw(text) if text.contains("Download 100 MB 1/3 · 642 Mbps · 63%"))
+    }));
     assert_eq!(operations.last(), Some(&TerminalOperation::Clear));
     assert!(operations.iter().all(
         |operation| !matches!(operation, TerminalOperation::Draw(text) if text.contains('\n'))
     ));
+}
+
+#[test]
+fn verbose_telemetry_renderer_ignores_snapshots_and_keeps_completion_only_transcript() {
+    let writer = SharedWriter::default();
+    let inspection = writer.clone();
+    let cancellation = CancellationToken::new();
+    let (reporter, receiver) = ProgressReporter::channel(3);
+    let renderer = spawn_progress_renderer(receiver, writer, cancellation.clone()).unwrap();
+
+    reporter.emit(ProgressEvent::RequestStarted {
+        stage: ProgressStage::Transfer {
+            direction: cfbench::plan::Direction::Download,
+            requested_bytes: 100_000_000,
+        },
+        current: Some(1),
+        total: Some(3),
+    });
+    reporter.emit(ProgressEvent::TransferAdvanced {
+        direction: cfbench::plan::Direction::Download,
+        requested_bytes: 100_000_000,
+        current: 1,
+        total: 3,
+        transferred_bytes: 63_000_000,
+        window_bytes: 20_062_500,
+        window_duration_ms: 250.0,
+    });
+    reporter.emit(ProgressEvent::TransferCompleted {
+        direction: cfbench::plan::Direction::Download,
+        requested_bytes: 100_000_000,
+        current: 1,
+        total: 3,
+        bps: 676_870_000,
+        adjusted_duration_ms: 1_188.4,
+    });
+    drop(reporter);
+
+    renderer.join().unwrap().unwrap();
+    assert_eq!(
+        inspection.text(),
+        concat!(
+            "Testing against Cloudflare edge...\n",
+            "[download 100 MB 1/3] 676.87 Mbps — 1.19 s\n",
+        )
+    );
+    assert_eq!(inspection.flushes(), 2);
+    assert!(!cancellation.is_cancelled());
+}
+
+#[test]
+fn telemetry_stays_silent_in_disabled_json_quiet_and_redirected_modes() {
+    let event = ProgressEvent::TransferAdvanced {
+        direction: cfbench::plan::Direction::Upload,
+        requested_bytes: 50_000_000,
+        current: 1,
+        total: 3,
+        transferred_bytes: 25_000_000,
+        window_bytes: 10_000_000,
+        window_duration_ms: 250.0,
+    };
+    let cases = [
+        (
+            OutputOptions {
+                json: true,
+                quiet: false,
+                verbose: false,
+            },
+            true,
+        ),
+        (
+            OutputOptions {
+                json: false,
+                quiet: true,
+                verbose: false,
+            },
+            true,
+        ),
+        (
+            OutputOptions {
+                json: false,
+                quiet: false,
+                verbose: false,
+            },
+            false,
+        ),
+    ];
+
+    for (options, terminal) in cases {
+        let mode = options.progress_mode(terminal);
+        assert_eq!(mode, ProgressMode::Disabled);
+        let mut stderr = SharedWriter::default();
+        write_progress(mode, &mut stderr).unwrap();
+        ProgressReporter::disabled().emit(event.clone());
+        assert!(stderr.text().is_empty());
+        assert_eq!(stderr.flushes(), 0);
+    }
 }
 
 #[test]
@@ -792,6 +931,7 @@ async fn run_progress_fixture(mode: ProgressMode) -> FixtureOutput {
 struct RecordingTerm {
     operations: Arc<Mutex<Vec<TerminalOperation>>>,
     panic_once: Option<Arc<AtomicBool>>,
+    fail_once: Option<Arc<AtomicBool>>,
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -806,6 +946,25 @@ impl RecordingTerm {
             panic_once: Some(panicked),
             ..Self::default()
         }
+    }
+
+    fn failing(failed: Arc<AtomicBool>) -> Self {
+        Self {
+            fail_once: Some(failed),
+            ..Self::default()
+        }
+    }
+
+    fn fail_draw_once(&self) -> std::io::Result<()> {
+        if let Some(failed) = &self.fail_once
+            && !failed.swap(true, Ordering::SeqCst)
+        {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::BrokenPipe,
+                "scripted compact draw failure",
+            ));
+        }
+        Ok(())
     }
 }
 
@@ -836,6 +995,7 @@ impl indicatif::TermLike for RecordingTerm {
     }
 
     fn write_line(&self, text: &str) -> std::io::Result<()> {
+        self.fail_draw_once()?;
         self.operations
             .lock()
             .unwrap()
@@ -844,6 +1004,7 @@ impl indicatif::TermLike for RecordingTerm {
     }
 
     fn write_str(&self, text: &str) -> std::io::Result<()> {
+        self.fail_draw_once()?;
         self.operations
             .lock()
             .unwrap()
