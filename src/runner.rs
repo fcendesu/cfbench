@@ -15,7 +15,9 @@ use crate::measurement::{
     MeasurementConversionError, TimingObservation, bandwidth_point, latency_point,
 };
 use crate::plan::{Direction, MeasurementPlan, MeasurementStep};
-use crate::progress::{ProgressEvent, ProgressFailureKind, ProgressReporter, ProgressStage};
+use crate::progress::{
+    ProgressEvent, ProgressFailureKind, ProgressReporter, ProgressStage, TransferTelemetry,
+};
 use crate::results::{
     MetadataStatus, NetworkMetadata, RpkiReachability, RpkiReachabilityStatus, RunResult, reduce,
 };
@@ -72,12 +74,14 @@ pub trait MeasurementTransport: Send + Sync + 'static {
         &'a self,
         bytes: u64,
         during: Option<&'a str>,
+        telemetry: TransferTelemetry,
         cancellation: &'a CancellationToken,
     ) -> MeasurementFuture<'a>;
 
     fn upload<'a>(
         &'a self,
         bytes: u64,
+        telemetry: TransferTelemetry,
         cancellation: &'a CancellationToken,
     ) -> MeasurementFuture<'a>;
 }
@@ -112,12 +116,14 @@ impl MeasurementTransport for ReqwestTransport {
         &'a self,
         bytes: u64,
         during: Option<&'a str>,
+        telemetry: TransferTelemetry,
         cancellation: &'a CancellationToken,
     ) -> MeasurementFuture<'a> {
-        Box::pin(ReqwestTransport::download(
+        Box::pin(ReqwestTransport::download_with_telemetry(
             self,
             bytes,
             during,
+            Some(telemetry),
             cancellation,
         ))
     }
@@ -125,9 +131,15 @@ impl MeasurementTransport for ReqwestTransport {
     fn upload<'a>(
         &'a self,
         bytes: u64,
+        telemetry: TransferTelemetry,
         cancellation: &'a CancellationToken,
     ) -> MeasurementFuture<'a> {
-        Box::pin(ReqwestTransport::upload(self, bytes, cancellation))
+        Box::pin(ReqwestTransport::upload_with_telemetry(
+            self,
+            bytes,
+            Some(telemetry),
+            cancellation,
+        ))
     }
 }
 
@@ -490,9 +502,15 @@ where
                 current: Some(current),
                 total: Some(total),
             });
+            let telemetry =
+                TransferTelemetry::new(reporter.clone(), direction, bytes, current, total);
             let observation = match direction {
-                Direction::Download => self.transport.download(bytes, None, cancellation).await,
-                Direction::Upload => self.transport.upload(bytes, cancellation).await,
+                Direction::Download => {
+                    self.transport
+                        .download(bytes, None, telemetry, cancellation)
+                        .await
+                }
+                Direction::Upload => self.transport.upload(bytes, telemetry, cancellation).await,
             };
             let observation = match observation {
                 Ok(observation) => observation,

@@ -7,7 +7,9 @@ use cfbench::cancellation::CancellationToken;
 use cfbench::error::TransportError;
 use cfbench::measurement::TimingObservation;
 use cfbench::plan::{Direction, MeasurementPlan, MeasurementStep};
-use cfbench::progress::{ProgressEvent, ProgressFailureKind, ProgressReporter, ProgressStage};
+use cfbench::progress::{
+    ProgressEvent, ProgressFailureKind, ProgressReporter, ProgressStage, TransferTelemetry,
+};
 use cfbench::runner::{MeasurementFuture, MeasurementTransport, Runner, RunnerError};
 use tokio::sync::Notify;
 
@@ -107,6 +109,7 @@ impl MeasurementTransport for TimedTransport {
         &'a self,
         bytes: u64,
         _: Option<&'a str>,
+        _: TransferTelemetry,
         cancellation: &'a CancellationToken,
     ) -> MeasurementFuture<'a> {
         Box::pin(async move {
@@ -135,6 +138,7 @@ impl MeasurementTransport for TimedTransport {
     fn upload<'a>(
         &'a self,
         bytes: u64,
+        _: TransferTelemetry,
         cancellation: &'a CancellationToken,
     ) -> MeasurementFuture<'a> {
         Box::pin(async move {

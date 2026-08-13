@@ -8,7 +8,9 @@ use cfbench::cancellation::CancellationToken;
 use cfbench::error::TransportError;
 use cfbench::measurement::TimingObservation;
 use cfbench::plan::{Direction, MeasurementPlan, MeasurementStep};
-use cfbench::progress::{ProgressEvent, ProgressFailureKind, ProgressReporter, ProgressStage};
+use cfbench::progress::{
+    ProgressEvent, ProgressFailureKind, ProgressReporter, ProgressStage, TransferTelemetry,
+};
 use cfbench::results::{
     ClientLocation, EdgeLocation, MetadataStatus, NetworkMetadata, RpkiReachability,
     RpkiReachabilityStatus,
@@ -126,13 +128,68 @@ impl MeasurementTransport for ScriptedTransport {
         &'a self,
         _: u64,
         _: Option<&'a str>,
+        _: TransferTelemetry,
         _: &'a CancellationToken,
     ) -> MeasurementFuture<'a> {
         Box::pin(async move { self.next("download") })
     }
 
-    fn upload<'a>(&'a self, _: u64, _: &'a CancellationToken) -> MeasurementFuture<'a> {
+    fn upload<'a>(
+        &'a self,
+        _: u64,
+        _: TransferTelemetry,
+        _: &'a CancellationToken,
+    ) -> MeasurementFuture<'a> {
         Box::pin(async move { self.next("upload") })
+    }
+}
+
+struct TelemetryRecordingTransport;
+
+impl MeasurementTransport for TelemetryRecordingTransport {
+    fn latency<'a>(&'a self, _: &'a CancellationToken) -> MeasurementFuture<'a> {
+        unreachable!("test plan contains no latency operation")
+    }
+
+    fn loaded_latency<'a>(
+        &'a self,
+        _: Direction,
+        _: &'a CancellationToken,
+    ) -> MeasurementFuture<'a> {
+        unreachable!("loaded latency is disabled")
+    }
+
+    fn download<'a>(
+        &'a self,
+        bytes: u64,
+        _: Option<&'a str>,
+        mut telemetry: TransferTelemetry,
+        _: &'a CancellationToken,
+    ) -> MeasurementFuture<'a> {
+        Box::pin(async move {
+            telemetry.begin();
+            tokio::time::sleep(Duration::from_millis(1)).await;
+            telemetry.observe(bytes, true);
+            Ok(TimingObservation::from_millis(
+                20.0, 500.0, 0.0, bytes, "HTTP/1.1",
+            ))
+        })
+    }
+
+    fn upload<'a>(
+        &'a self,
+        bytes: u64,
+        mut telemetry: TransferTelemetry,
+        _: &'a CancellationToken,
+    ) -> MeasurementFuture<'a> {
+        Box::pin(async move {
+            telemetry.begin();
+            tokio::time::sleep(Duration::from_millis(1)).await;
+            telemetry.observe(bytes, true);
+            Ok(TimingObservation::from_millis(
+                20.0, 500.0, 0.0, bytes, "HTTP/1.1",
+            ))
+        })
     }
 }
 
@@ -164,6 +221,74 @@ fn downloads(groups: &[(u64, u32, bool)]) -> MeasurementPlan {
             })
             .collect(),
     )
+}
+
+#[tokio::test]
+async fn runner_passes_download_group_context_to_transport_telemetry() {
+    let runner = Runner::new(
+        TelemetryRecordingTransport,
+        downloads(&[(1_000_000, 2, true)]),
+    )
+    .with_loaded_latency(false);
+    let (progress, receiver) = ProgressReporter::channel(16);
+
+    let outcome = runner
+        .run_with_progress(&CancellationToken::new(), progress)
+        .await;
+    let events = receiver.into_iter().collect::<Vec<_>>();
+
+    assert!(outcome.error.is_none());
+    assert!(matches!(
+        events.as_slice(),
+        [
+            ProgressEvent::RequestStarted {
+                stage: ProgressStage::Transfer {
+                    direction: Direction::Download,
+                    requested_bytes: 1_000_000,
+                },
+                current: Some(1),
+                total: Some(2),
+            },
+            ProgressEvent::TransferAdvanced {
+                direction: Direction::Download,
+                requested_bytes: 1_000_000,
+                current: 1,
+                total: 2,
+                transferred_bytes: 1_000_000,
+                ..
+            },
+            ProgressEvent::TransferCompleted {
+                direction: Direction::Download,
+                requested_bytes: 1_000_000,
+                current: 1,
+                total: 2,
+                ..
+            },
+            ProgressEvent::RequestStarted {
+                stage: ProgressStage::Transfer {
+                    direction: Direction::Download,
+                    requested_bytes: 1_000_000,
+                },
+                current: Some(2),
+                total: Some(2),
+            },
+            ProgressEvent::TransferAdvanced {
+                direction: Direction::Download,
+                requested_bytes: 1_000_000,
+                current: 2,
+                total: 2,
+                transferred_bytes: 1_000_000,
+                ..
+            },
+            ProgressEvent::TransferCompleted {
+                direction: Direction::Download,
+                requested_bytes: 1_000_000,
+                current: 2,
+                total: 2,
+                ..
+            },
+        ]
+    ));
 }
 
 fn metadata_fixture() -> NetworkMetadata {
@@ -237,12 +362,18 @@ impl MeasurementTransport for FinalOperationCancellationTransport {
         &'a self,
         _: u64,
         _: Option<&'a str>,
+        _: TransferTelemetry,
         _: &'a CancellationToken,
     ) -> MeasurementFuture<'a> {
         unreachable!("test plan contains no download operation")
     }
 
-    fn upload<'a>(&'a self, _: u64, _: &'a CancellationToken) -> MeasurementFuture<'a> {
+    fn upload<'a>(
+        &'a self,
+        _: u64,
+        _: TransferTelemetry,
+        _: &'a CancellationToken,
+    ) -> MeasurementFuture<'a> {
         unreachable!("test plan contains no upload operation")
     }
 }
@@ -1294,11 +1425,9 @@ async fn progress_reports_only_accepted_points_with_phase_local_counters() {
 }
 
 #[tokio::test]
-async fn upload_request_start_immediately_precedes_completion() {
+async fn upload_telemetry_stays_inside_request_lifecycle() {
     let runner = Runner::new(
-        ScriptedTransport::new([Ok(TimingObservation::from_millis(
-            20.0, 500.0, 0.0, 100_000, "HTTP/1.1",
-        ))]),
+        TelemetryRecordingTransport,
         plan(vec![MeasurementStep::Upload {
             bytes: 100_000,
             count: 1,
@@ -1306,7 +1435,7 @@ async fn upload_request_start_immediately_precedes_completion() {
         }]),
     )
     .with_loaded_latency(false);
-    let (progress, receiver) = ProgressReporter::channel(2);
+    let (progress, receiver) = ProgressReporter::channel(3);
 
     let outcome = runner
         .run_with_progress(&CancellationToken::new(), progress)
@@ -1314,8 +1443,8 @@ async fn upload_request_start_immediately_precedes_completion() {
     let events: Vec<_> = receiver.into_iter().collect();
 
     assert!(outcome.error.is_none());
-    assert_eq!(
-        events,
+    assert!(matches!(
+        events.as_slice(),
         [
             ProgressEvent::RequestStarted {
                 stage: ProgressStage::Transfer {
@@ -1324,6 +1453,14 @@ async fn upload_request_start_immediately_precedes_completion() {
                 },
                 current: Some(1),
                 total: Some(1),
+            },
+            ProgressEvent::TransferAdvanced {
+                direction: Direction::Upload,
+                requested_bytes: 100_000,
+                current: 1,
+                total: 1,
+                transferred_bytes: 100_000,
+                ..
             },
             ProgressEvent::TransferCompleted {
                 direction: Direction::Upload,
@@ -1334,7 +1471,7 @@ async fn upload_request_start_immediately_precedes_completion() {
                 adjusted_duration_ms: 20.0,
             },
         ]
-    );
+    ));
 }
 
 #[tokio::test]

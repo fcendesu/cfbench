@@ -12,11 +12,12 @@ use tokio_util::sync::CancellationToken;
 use crate::config::{IpMode, RunConfig};
 use crate::error::TransportError;
 use crate::measurement::TimingObservation;
+use crate::progress::TransferTelemetry;
 use crate::results::{NetworkMetadata, RpkiReachability, RpkiReachabilityStatus};
 
 use super::metadata::{MetadataDecodeError, metadata_from_slice};
 use super::server_timing::server_duration;
-use super::upload_body::stream_upload;
+use super::upload_body::stream_upload_with_telemetry;
 
 const CLOUDFLARE_BASE_URL: &str = "https://speed.cloudflare.com";
 const SERVER_TIMING: &str = "server-timing";
@@ -167,6 +168,17 @@ impl ReqwestTransport {
         during: Option<&str>,
         cancellation: &CancellationToken,
     ) -> Result<TimingObservation, TransportError> {
+        self.download_with_telemetry(bytes, during, None, cancellation)
+            .await
+    }
+
+    pub(crate) async fn download_with_telemetry(
+        &self,
+        bytes: u64,
+        during: Option<&str>,
+        mut telemetry: Option<TransferTelemetry>,
+        cancellation: &CancellationToken,
+    ) -> Result<TimingObservation, TransportError> {
         let (request, endpoint) = self.download_request(bytes, during)?;
 
         let started = Instant::now();
@@ -179,6 +191,9 @@ impl ReqwestTransport {
             validate_response(response, &endpoint)?;
 
         let mut payload_bytes = 0_u64;
+        if let Some(telemetry) = telemetry.as_mut() {
+            telemetry.begin();
+        }
         loop {
             let chunk = match self
                 .next_chunk(
@@ -201,6 +216,9 @@ impl ReqwestTransport {
                     actual: u64::MAX,
                 },
             )?;
+            if let Some(telemetry) = telemetry.as_mut() {
+                telemetry.observe(payload_bytes, false);
+            }
         }
         let total = started.elapsed();
 
@@ -210,6 +228,9 @@ impl ReqwestTransport {
                 expected: bytes,
                 actual: payload_bytes,
             });
+        }
+        if let Some(telemetry) = telemetry.as_mut() {
+            telemetry.observe(payload_bytes, true);
         }
 
         let observation = TimingObservation::new(
@@ -228,9 +249,19 @@ impl ReqwestTransport {
         bytes: u64,
         cancellation: &CancellationToken,
     ) -> Result<TimingObservation, TransportError> {
+        self.upload_with_telemetry(bytes, None, cancellation).await
+    }
+
+    pub(crate) async fn upload_with_telemetry(
+        &self,
+        bytes: u64,
+        telemetry: Option<TransferTelemetry>,
+        cancellation: &CancellationToken,
+    ) -> Result<TimingObservation, TransportError> {
         let url = self.endpoint("__up")?;
         let endpoint = redacted_endpoint(&url);
-        let (stream, content_length, yielded_bytes) = stream_upload(bytes);
+        let (stream, content_length, yielded_bytes) =
+            stream_upload_with_telemetry(bytes, telemetry);
         let request = self
             .client
             .post(url)

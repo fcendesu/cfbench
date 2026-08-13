@@ -79,6 +79,45 @@ fn public_docs_define_dynamic_terminal_progress_without_a_tui() {
 }
 
 #[test]
+fn public_docs_define_live_transfer_telemetry() {
+    let readme = std::fs::read_to_string("README.md").unwrap();
+    let compatibility = std::fs::read_to_string("docs/COMPATIBILITY.md").unwrap();
+    let normalized_readme = readme.split_whitespace().collect::<Vec<_>>().join(" ");
+    let normalized_compatibility = compatibility
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+
+    assert!(normalized_readme.contains("Download 100 MB 1/3 · 642 Mbps · 63% · loaded 32.4 ms"));
+    assert!(normalized_readme.contains("provisional recent-window display"));
+    assert!(normalized_readme.contains("current request"));
+    assert!(normalized_readme.contains("running latency/jitter"));
+    assert!(normalized_readme.contains("latest direction-local loaded-latency probe"));
+    assert!(
+        normalized_compatibility.contains("latest direction-local loaded latency when available")
+    );
+    assert!(normalized_readme.contains("Final p90/median reductions remain authoritative"));
+    assert!(normalized_readme.contains("transport-consumption feedback"));
+    assert!(normalized_readme.contains("`--verbose` prints permanent per-request lines instead"));
+    assert!(normalized_compatibility.contains("`--verbose` retains permanent per-request lines"));
+    assert!(normalized_readme.contains(
+        "For redirected default output and in `--json` and `--quiet` modes, dynamic progress is not emitted; their behavior is unchanged"
+    ));
+    assert!(normalized_compatibility.contains(
+        "For redirected default output and in `--json` and `--quiet` modes, dynamic progress is not emitted and behavior is unchanged"
+    ));
+
+    for document in [&readme, &compatibility] {
+        let normalized = document.split_whitespace().collect::<Vec<_>>().join(" ");
+        assert!(normalized.contains("`--verbose`"));
+        assert!(normalized.contains("`--json`"));
+        assert!(normalized.contains("`--quiet`"));
+        assert!(normalized.contains("redirected"));
+    }
+    assert!(compatibility.contains("measurement isolation"));
+}
+
+#[test]
 fn upstream_plan_matches_v1_13_0() {
     let plan = default_cloudflare_plan();
     let fixture = fixture();
