@@ -337,11 +337,18 @@ async fn direct_run_with_progress_reconciles_final_cancellation_and_keeps_the_po
     assert_eq!(outcome.result.failures.len(), 1);
     assert_eq!(
         events,
-        [ProgressEvent::LatencyCompleted {
-            current: 1,
-            total: 1,
-            latency_ms: 10.0,
-        }]
+        [
+            ProgressEvent::RequestStarted {
+                stage: ProgressStage::Latency,
+                current: Some(1),
+                total: Some(1),
+            },
+            ProgressEvent::LatencyCompleted {
+                current: 1,
+                total: 1,
+                latency_ms: 10.0,
+            }
+        ]
     );
 }
 
@@ -1204,10 +1211,23 @@ async fn progress_reports_only_accepted_points_with_phase_local_counters() {
     assert_eq!(
         events,
         vec![
+            ProgressEvent::RequestStarted {
+                stage: ProgressStage::Latency,
+                current: Some(1),
+                total: Some(1),
+            },
             ProgressEvent::LatencyCompleted {
                 current: 1,
                 total: 1,
                 latency_ms: 10.0,
+            },
+            ProgressEvent::RequestStarted {
+                stage: ProgressStage::Transfer {
+                    direction: Direction::Download,
+                    requested_bytes: 100_000,
+                },
+                current: Some(1),
+                total: Some(1),
             },
             ProgressEvent::TransferCompleted {
                 direction: Direction::Download,
@@ -1216,16 +1236,34 @@ async fn progress_reports_only_accepted_points_with_phase_local_counters() {
                 total: 1,
                 bps: 1_608_000,
                 adjusted_duration_ms: 500.0,
+            },
+            ProgressEvent::RequestStarted {
+                stage: ProgressStage::Latency,
+                current: Some(1),
+                total: Some(2),
             },
             ProgressEvent::LatencyCompleted {
                 current: 1,
                 total: 2,
                 latency_ms: 20.0,
             },
+            ProgressEvent::RequestStarted {
+                stage: ProgressStage::Latency,
+                current: Some(2),
+                total: Some(2),
+            },
             ProgressEvent::LatencyCompleted {
                 current: 2,
                 total: 2,
                 latency_ms: 21.0,
+            },
+            ProgressEvent::RequestStarted {
+                stage: ProgressStage::Transfer {
+                    direction: Direction::Download,
+                    requested_bytes: 100_000,
+                },
+                current: Some(1),
+                total: Some(2),
             },
             ProgressEvent::TransferCompleted {
                 direction: Direction::Download,
@@ -1234,6 +1272,14 @@ async fn progress_reports_only_accepted_points_with_phase_local_counters() {
                 total: 2,
                 bps: 1_608_000,
                 adjusted_duration_ms: 500.0,
+            },
+            ProgressEvent::RequestStarted {
+                stage: ProgressStage::Transfer {
+                    direction: Direction::Download,
+                    requested_bytes: 100_000,
+                },
+                current: Some(2),
+                total: Some(2),
             },
             ProgressEvent::TransferCompleted {
                 direction: Direction::Download,
@@ -1279,6 +1325,38 @@ async fn progress_reports_one_safe_failure_and_preserves_accepted_points() {
             .count(),
         1
     );
+    assert!(matches!(
+        events.first(),
+        Some(ProgressEvent::RequestStarted {
+            stage: ProgressStage::Transfer {
+                direction: Direction::Download,
+                requested_bytes: 100_000,
+            },
+            current: Some(1),
+            total: Some(2),
+        })
+    ));
+    assert!(matches!(
+        events.get(1),
+        Some(ProgressEvent::TransferCompleted {
+            direction: Direction::Download,
+            requested_bytes: 100_000,
+            current: 1,
+            total: 2,
+            ..
+        })
+    ));
+    assert!(matches!(
+        events.get(2),
+        Some(ProgressEvent::RequestStarted {
+            stage: ProgressStage::Transfer {
+                direction: Direction::Download,
+                requested_bytes: 100_000,
+            },
+            current: Some(2),
+            total: Some(2),
+        })
+    ));
     assert_eq!(
         events.last(),
         Some(&ProgressEvent::RequestFailed {
@@ -1364,6 +1442,17 @@ async fn initial_and_later_hundred_kilobyte_groups_have_independent_counters() {
     assert_eq!(outcome.result.raw.download.len(), 10);
     assert!(matches!(
         events.first(),
+        Some(ProgressEvent::RequestStarted {
+            stage: ProgressStage::Transfer {
+                direction: Direction::Download,
+                requested_bytes: 100_000,
+            },
+            current: Some(1),
+            total: Some(1),
+        })
+    ));
+    assert!(matches!(
+        events.get(1),
         Some(ProgressEvent::TransferCompleted {
             direction: Direction::Download,
             requested_bytes: 100_000,
@@ -1373,13 +1462,35 @@ async fn initial_and_later_hundred_kilobyte_groups_have_independent_counters() {
         })
     ));
     assert!(matches!(
-        events.get(1),
+        events.get(2),
+        Some(ProgressEvent::RequestStarted {
+            stage: ProgressStage::Transfer {
+                direction: Direction::Download,
+                requested_bytes: 100_000,
+            },
+            current: Some(1),
+            total: Some(9),
+        })
+    ));
+    assert!(matches!(
+        events.get(3),
         Some(ProgressEvent::TransferCompleted {
             direction: Direction::Download,
             requested_bytes: 100_000,
             current: 1,
             total: 9,
             ..
+        })
+    ));
+    assert!(matches!(
+        events.get(events.len() - 2),
+        Some(ProgressEvent::RequestStarted {
+            stage: ProgressStage::Transfer {
+                direction: Direction::Download,
+                requested_bytes: 100_000,
+            },
+            current: Some(9),
+            total: Some(9),
         })
     ));
     assert!(matches!(

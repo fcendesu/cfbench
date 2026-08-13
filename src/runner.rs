@@ -396,6 +396,11 @@ where
         for (index, _) in (0..packets).enumerate() {
             let current = progress_counter(index.saturating_add(1));
             let total = progress_counter(packets as usize);
+            progress.emit(ProgressEvent::RequestStarted {
+                stage: ProgressStage::Latency,
+                current: Some(current),
+                total: Some(total),
+            });
             let observation = match self.transport.latency(cancellation).await {
                 Ok(observation) => observation,
                 Err(error) => {
@@ -477,6 +482,14 @@ where
         for (index, _) in (0..count).enumerate() {
             let current = progress_counter(index.saturating_add(1));
             let total = progress_counter(count as usize);
+            reporter.emit(ProgressEvent::RequestStarted {
+                stage: ProgressStage::Transfer {
+                    direction,
+                    requested_bytes: bytes,
+                },
+                current: Some(current),
+                total: Some(total),
+            });
             let observation = match direction {
                 Direction::Download => self.transport.download(bytes, None, cancellation).await,
                 Direction::Upload => self.transport.upload(bytes, cancellation).await,

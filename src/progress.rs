@@ -7,6 +7,12 @@ use crate::plan::Direction;
 /// A completed or informational measurement event for line-oriented progress.
 #[derive(Clone, Debug, PartialEq)]
 pub enum ProgressEvent {
+    /// A measurement request is about to begin.
+    RequestStarted {
+        stage: ProgressStage,
+        current: Option<u16>,
+        total: Option<u16>,
+    },
     /// An accepted unloaded latency point.
     LatencyCompleted {
         current: u16,
