@@ -120,6 +120,7 @@ pub struct TransferTelemetry {
     current: u16,
     total: u16,
     last_sample: Option<(Instant, u64)>,
+    finished: bool,
 }
 
 impl TransferTelemetry {
@@ -138,6 +139,7 @@ impl TransferTelemetry {
             current,
             total,
             last_sample: None,
+            finished: false,
         }
     }
 
@@ -153,9 +155,16 @@ impl TransferTelemetry {
 
     fn begin_at(&mut self, started: Instant) {
         self.last_sample = Some((started, 0));
+        self.finished = false;
     }
 
     fn observe_at(&mut self, transferred_bytes: u64, observed_at: Instant, finished: bool) {
+        if self.finished {
+            return;
+        }
+        if finished {
+            self.finished = true;
+        }
         if transferred_bytes > self.requested_bytes {
             return;
         }
@@ -242,6 +251,31 @@ mod tests {
                 window_duration_ms: 10.0,
             }
         );
+    }
+
+    #[test]
+    fn transfer_telemetry_emits_only_one_final_sample() {
+        let (reporter, receiver) = ProgressReporter::channel(2);
+        let started = Instant::now();
+        let mut telemetry = TransferTelemetry::new(reporter, Direction::Upload, 1_000, 2, 3);
+        telemetry.begin_at(started);
+
+        telemetry.observe_at(100, started + Duration::from_millis(10), true);
+        telemetry.observe_at(200, started + Duration::from_millis(20), true);
+
+        assert_eq!(
+            receiver.try_recv().unwrap(),
+            ProgressEvent::TransferAdvanced {
+                direction: Direction::Upload,
+                requested_bytes: 1_000,
+                current: 2,
+                total: 3,
+                transferred_bytes: 100,
+                window_bytes: 100,
+                window_duration_ms: 10.0,
+            }
+        );
+        assert!(receiver.try_recv().is_err());
     }
 
     #[test]
