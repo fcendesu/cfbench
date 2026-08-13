@@ -51,6 +51,72 @@ fn cancellation_is_failure_even_after_an_accepted_point() {
     assert_eq!(exit_status(&outcome), EXIT_FAILURE);
 }
 
+#[test]
+fn output_options_select_progress_mode_from_flags_and_terminal_state() {
+    use cfbench::app::ProgressMode;
+
+    let cases = [
+        (
+            OutputOptions {
+                json: false,
+                quiet: false,
+                verbose: false,
+            },
+            true,
+            ProgressMode::Compact,
+        ),
+        (
+            OutputOptions {
+                json: false,
+                quiet: false,
+                verbose: false,
+            },
+            false,
+            ProgressMode::Disabled,
+        ),
+        (
+            OutputOptions {
+                json: false,
+                quiet: false,
+                verbose: true,
+            },
+            true,
+            ProgressMode::Verbose,
+        ),
+        (
+            OutputOptions {
+                json: false,
+                quiet: false,
+                verbose: true,
+            },
+            false,
+            ProgressMode::Verbose,
+        ),
+        (
+            OutputOptions {
+                json: true,
+                quiet: false,
+                verbose: false,
+            },
+            true,
+            ProgressMode::Disabled,
+        ),
+        (
+            OutputOptions {
+                json: false,
+                quiet: true,
+                verbose: false,
+            },
+            true,
+            ProgressMode::Disabled,
+        ),
+    ];
+
+    for (options, terminal, expected) in cases {
+        assert_eq!(options.progress_mode(terminal), expected);
+    }
+}
+
 #[tokio::test]
 async fn progress_requires_verbose_text_mode() {
     let plain = run_progress_fixture(OutputOptions {

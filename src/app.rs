@@ -33,6 +33,13 @@ pub struct OutputOptions {
     pub verbose: bool,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ProgressMode {
+    Disabled,
+    Compact,
+    Verbose,
+}
+
 impl OutputOptions {
     fn final_output(self) -> FinalOutput {
         if self.quiet {
@@ -46,6 +53,18 @@ impl OutputOptions {
 
     fn progress_enabled(self) -> bool {
         self.verbose && !self.quiet && !self.json
+    }
+
+    pub fn progress_mode(self, stderr_is_terminal: bool) -> ProgressMode {
+        if self.quiet || self.json {
+            ProgressMode::Disabled
+        } else if self.verbose {
+            ProgressMode::Verbose
+        } else if stderr_is_terminal {
+            ProgressMode::Compact
+        } else {
+            ProgressMode::Disabled
+        }
     }
 }
 
