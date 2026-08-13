@@ -95,6 +95,10 @@ pub fn render_compact_progress(event: &ProgressEvent) -> Option<String> {
         )),
         ProgressEvent::LoadedLatencyCompleted { .. } => None,
         ProgressEvent::RequestFailed {
+            stage: ProgressStage::LoadedLatency { .. },
+            ..
+        } => None,
+        ProgressEvent::RequestFailed {
             stage,
             current,
             total,

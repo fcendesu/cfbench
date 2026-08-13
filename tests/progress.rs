@@ -68,14 +68,26 @@ fn compact_progress_formats_primary_request_lifecycle() {
 }
 
 #[test]
-fn compact_progress_keeps_loaded_latency_out_of_active_display() {
-    let rendered = render_compact_progress(&ProgressEvent::LoadedLatencyCompleted {
-        direction: Direction::Download,
-        sequence: 4,
-        latency_ms: 12.4,
-    });
+fn compact_progress_keeps_loaded_latency_events_out_of_active_display() {
+    let events = [
+        ProgressEvent::LoadedLatencyCompleted {
+            direction: Direction::Download,
+            sequence: 4,
+            latency_ms: 12.4,
+        },
+        ProgressEvent::RequestFailed {
+            stage: ProgressStage::LoadedLatency {
+                direction: Direction::Download,
+            },
+            current: None,
+            total: None,
+            kind: ProgressFailureKind::Timeout,
+        },
+    ];
 
-    assert_eq!(rendered, None);
+    for event in events {
+        assert_eq!(render_compact_progress(&event), None);
+    }
 }
 
 #[test]

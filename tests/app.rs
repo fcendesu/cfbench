@@ -117,11 +117,16 @@ fn output_options_select_progress_mode_from_flags_and_terminal_state() {
 }
 
 #[tokio::test]
-async fn verbose_mode_keeps_permanent_progress_lines() {
+async fn verbose_mode_preserves_the_legacy_progress_transcript() {
     let output = run_progress_fixture(ProgressMode::Verbose).await;
-    assert!(output.stderr.contains("Testing against Cloudflare edge"));
-    assert!(output.stderr.contains("[latency 1/2] started"));
-    assert!(output.stderr.contains("[latency 1/2]"));
+    assert_eq!(
+        output.stderr,
+        concat!(
+            "Testing against Cloudflare edge...\n",
+            "[latency 1/2] 10.00 ms\n",
+            "[latency 2/2] 10.00 ms\n",
+        )
+    );
 }
 
 #[tokio::test]

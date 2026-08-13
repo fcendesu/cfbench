@@ -1294,6 +1294,50 @@ async fn progress_reports_only_accepted_points_with_phase_local_counters() {
 }
 
 #[tokio::test]
+async fn upload_request_start_immediately_precedes_completion() {
+    let runner = Runner::new(
+        ScriptedTransport::new([Ok(TimingObservation::from_millis(
+            20.0, 500.0, 0.0, 100_000, "HTTP/1.1",
+        ))]),
+        plan(vec![MeasurementStep::Upload {
+            bytes: 100_000,
+            count: 1,
+            bypass_finish: true,
+        }]),
+    )
+    .with_loaded_latency(false);
+    let (progress, receiver) = ProgressReporter::channel(2);
+
+    let outcome = runner
+        .run_with_progress(&CancellationToken::new(), progress)
+        .await;
+    let events: Vec<_> = receiver.into_iter().collect();
+
+    assert!(outcome.error.is_none());
+    assert_eq!(
+        events,
+        [
+            ProgressEvent::RequestStarted {
+                stage: ProgressStage::Transfer {
+                    direction: Direction::Upload,
+                    requested_bytes: 100_000,
+                },
+                current: Some(1),
+                total: Some(1),
+            },
+            ProgressEvent::TransferCompleted {
+                direction: Direction::Upload,
+                requested_bytes: 100_000,
+                current: 1,
+                total: 1,
+                bps: 40_200_000,
+                adjusted_duration_ms: 20.0,
+            },
+        ]
+    );
+}
+
+#[tokio::test]
 async fn progress_reports_one_safe_failure_and_preserves_accepted_points() {
     let runner = Runner::new(
         ScriptedTransport::new([

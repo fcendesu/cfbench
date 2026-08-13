@@ -321,6 +321,9 @@ where
 {
     write_progress_line(&mut writer, OPENING_PROGRESS_LINE)?;
     for event in receiver {
+        if matches!(event, ProgressEvent::RequestStarted { .. }) {
+            continue;
+        }
         write_progress_line(&mut writer, &render_progress(&event))?;
     }
     Ok(())
