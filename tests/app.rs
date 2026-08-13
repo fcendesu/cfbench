@@ -16,7 +16,7 @@ use cfbench::cancellation::CancellationToken;
 use cfbench::error::TransportError;
 use cfbench::measurement::TimingObservation;
 use cfbench::plan::{MeasurementPlan, MeasurementStep};
-use cfbench::progress::{ProgressEvent, ProgressReporter, ProgressStage};
+use cfbench::progress::{ProgressEvent, ProgressReporter, ProgressStage, TransferTelemetry};
 use cfbench::results::{EdgeLocation, LatencyPoint, MetadataStatus, NetworkMetadata, RunResult};
 use cfbench::runner::{MeasurementFuture, MeasurementTransport, RunOutcome, Runner, RunnerError};
 
@@ -914,12 +914,18 @@ impl MeasurementTransport for ImmediateLatencyTransport {
         &'a self,
         _: u64,
         _: Option<&'a str>,
+        _: TransferTelemetry,
         _: &'a CancellationToken,
     ) -> MeasurementFuture<'a> {
         unused_measurement()
     }
 
-    fn upload<'a>(&'a self, _: u64, _: &'a CancellationToken) -> MeasurementFuture<'a> {
+    fn upload<'a>(
+        &'a self,
+        _: u64,
+        _: TransferTelemetry,
+        _: &'a CancellationToken,
+    ) -> MeasurementFuture<'a> {
         unused_measurement()
     }
 }
@@ -986,12 +992,18 @@ impl MeasurementTransport for CancellationAwareTransport {
         &'a self,
         _: u64,
         _: Option<&'a str>,
+        _: TransferTelemetry,
         _: &'a CancellationToken,
     ) -> MeasurementFuture<'a> {
         unused_measurement()
     }
 
-    fn upload<'a>(&'a self, _: u64, _: &'a CancellationToken) -> MeasurementFuture<'a> {
+    fn upload<'a>(
+        &'a self,
+        _: u64,
+        _: TransferTelemetry,
+        _: &'a CancellationToken,
+    ) -> MeasurementFuture<'a> {
         unused_measurement()
     }
 }
@@ -1053,12 +1065,18 @@ impl MeasurementTransport for CountingLatencyTransport {
         &'a self,
         _: u64,
         _: Option<&'a str>,
+        _: TransferTelemetry,
         _: &'a CancellationToken,
     ) -> MeasurementFuture<'a> {
         unused_measurement()
     }
 
-    fn upload<'a>(&'a self, _: u64, _: &'a CancellationToken) -> MeasurementFuture<'a> {
+    fn upload<'a>(
+        &'a self,
+        _: u64,
+        _: TransferTelemetry,
+        _: &'a CancellationToken,
+    ) -> MeasurementFuture<'a> {
         unused_measurement()
     }
 }
@@ -1094,12 +1112,18 @@ impl MeasurementTransport for InstallAwareTransport {
         &'a self,
         _: u64,
         _: Option<&'a str>,
+        _: TransferTelemetry,
         _: &'a CancellationToken,
     ) -> MeasurementFuture<'a> {
         unused_measurement()
     }
 
-    fn upload<'a>(&'a self, _: u64, _: &'a CancellationToken) -> MeasurementFuture<'a> {
+    fn upload<'a>(
+        &'a self,
+        _: u64,
+        _: TransferTelemetry,
+        _: &'a CancellationToken,
+    ) -> MeasurementFuture<'a> {
         unused_measurement()
     }
 }
@@ -1144,12 +1168,18 @@ impl MeasurementTransport for ConcurrentSuccessTransport {
         &'a self,
         _: u64,
         _: Option<&'a str>,
+        _: TransferTelemetry,
         _: &'a CancellationToken,
     ) -> MeasurementFuture<'a> {
         unused_measurement()
     }
 
-    fn upload<'a>(&'a self, _: u64, _: &'a CancellationToken) -> MeasurementFuture<'a> {
+    fn upload<'a>(
+        &'a self,
+        _: u64,
+        _: TransferTelemetry,
+        _: &'a CancellationToken,
+    ) -> MeasurementFuture<'a> {
         unused_measurement()
     }
 }
@@ -1176,12 +1206,18 @@ impl MeasurementTransport for ConcurrentErrorTransport {
         &'a self,
         _: u64,
         _: Option<&'a str>,
+        _: TransferTelemetry,
         _: &'a CancellationToken,
     ) -> MeasurementFuture<'a> {
         unused_measurement()
     }
 
-    fn upload<'a>(&'a self, _: u64, _: &'a CancellationToken) -> MeasurementFuture<'a> {
+    fn upload<'a>(
+        &'a self,
+        _: u64,
+        _: TransferTelemetry,
+        _: &'a CancellationToken,
+    ) -> MeasurementFuture<'a> {
         unused_measurement()
     }
 }
@@ -1258,12 +1294,18 @@ impl MeasurementTransport for ErrorTransport {
         &'a self,
         _: u64,
         _: Option<&'a str>,
+        _: TransferTelemetry,
         _: &'a CancellationToken,
     ) -> MeasurementFuture<'a> {
         unused_measurement()
     }
 
-    fn upload<'a>(&'a self, _: u64, _: &'a CancellationToken) -> MeasurementFuture<'a> {
+    fn upload<'a>(
+        &'a self,
+        _: u64,
+        _: TransferTelemetry,
+        _: &'a CancellationToken,
+    ) -> MeasurementFuture<'a> {
         unused_measurement()
     }
 }

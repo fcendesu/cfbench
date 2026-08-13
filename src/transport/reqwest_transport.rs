@@ -12,6 +12,7 @@ use tokio_util::sync::CancellationToken;
 use crate::config::{IpMode, RunConfig};
 use crate::error::TransportError;
 use crate::measurement::TimingObservation;
+use crate::progress::TransferTelemetry;
 use crate::results::{NetworkMetadata, RpkiReachability, RpkiReachabilityStatus};
 
 use super::metadata::{MetadataDecodeError, metadata_from_slice};
@@ -167,6 +168,17 @@ impl ReqwestTransport {
         during: Option<&str>,
         cancellation: &CancellationToken,
     ) -> Result<TimingObservation, TransportError> {
+        self.download_with_telemetry(bytes, during, None, cancellation)
+            .await
+    }
+
+    pub(crate) async fn download_with_telemetry(
+        &self,
+        bytes: u64,
+        during: Option<&str>,
+        mut telemetry: Option<TransferTelemetry>,
+        cancellation: &CancellationToken,
+    ) -> Result<TimingObservation, TransportError> {
         let (request, endpoint) = self.download_request(bytes, during)?;
 
         let started = Instant::now();
@@ -179,6 +191,9 @@ impl ReqwestTransport {
             validate_response(response, &endpoint)?;
 
         let mut payload_bytes = 0_u64;
+        if let Some(telemetry) = telemetry.as_mut() {
+            telemetry.begin();
+        }
         loop {
             let chunk = match self
                 .next_chunk(
@@ -201,6 +216,9 @@ impl ReqwestTransport {
                     actual: u64::MAX,
                 },
             )?;
+            if let Some(telemetry) = telemetry.as_mut() {
+                telemetry.observe(payload_bytes, false);
+            }
         }
         let total = started.elapsed();
 
@@ -210,6 +228,9 @@ impl ReqwestTransport {
                 expected: bytes,
                 actual: payload_bytes,
             });
+        }
+        if let Some(telemetry) = telemetry.as_mut() {
+            telemetry.observe(payload_bytes, true);
         }
 
         let observation = TimingObservation::new(

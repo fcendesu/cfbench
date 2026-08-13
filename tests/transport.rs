@@ -6,6 +6,7 @@ use std::time::Duration;
 use cfbench::config::{IpMode, RunConfig};
 use cfbench::error::TransportError;
 use cfbench::plan::{MeasurementPlan, MeasurementStep};
+use cfbench::progress::{ProgressEvent, ProgressReporter};
 use cfbench::results::RpkiReachabilityStatus;
 use cfbench::runner::{Runner, RunnerError};
 use cfbench::transport::ReqwestTransport;
@@ -33,6 +34,57 @@ fn config(ip_mode: IpMode, timeout: Duration) -> RunConfig {
 fn transport_for(server: &FixtureServer, ip_mode: IpMode, timeout: Duration) -> ReqwestTransport {
     ReqwestTransport::with_base_url(config(ip_mode, timeout), server.url())
         .expect("fixture transport")
+}
+
+#[tokio::test]
+async fn download_stream_reports_live_transfer_snapshots() {
+    let server = FixtureServer::start(ResponsePlan::Trickle {
+        chunks: 3,
+        chunk_interval: Duration::from_millis(300),
+    })
+    .await;
+    let runner = Runner::new(
+        transport_for(&server, IpMode::V4Only, Duration::from_secs(2)),
+        MeasurementPlan {
+            upstream_version: "test",
+            upstream_commit: "test",
+            steps: vec![MeasurementStep::Download {
+                bytes: 3,
+                count: 1,
+                bypass_finish: true,
+            }],
+        },
+    )
+    .with_loaded_latency(false);
+    let (progress, receiver) = ProgressReporter::channel(16);
+
+    let outcome = runner
+        .run_with_progress(&CancellationToken::new(), progress)
+        .await;
+    let events = receiver.into_iter().collect::<Vec<_>>();
+
+    assert!(outcome.error.is_none());
+    assert!(events.iter().any(|event| {
+        matches!(
+            event,
+            ProgressEvent::TransferAdvanced {
+                transferred_bytes,
+                window_bytes,
+                window_duration_ms,
+                ..
+            } if *transferred_bytes > 0
+                && *transferred_bytes < 3
+                && *window_bytes > 0
+                && *window_duration_ms > 0.0
+        )
+    }));
+
+    let point = &outcome.result.raw.download[0];
+    assert_eq!(point.payload_bytes, 3);
+    assert_eq!(point.server_time_ms, 0.0);
+    assert_eq!(point.http_version.as_deref(), Some("1.1"));
+    assert!(point.duration_ms >= 500.0);
+    assert!(point.adjusted_duration_ms >= 500.0);
 }
 
 #[tokio::test]

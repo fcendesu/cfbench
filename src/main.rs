@@ -126,6 +126,7 @@ mod tests {
     use cfbench::cancellation::CancellationToken;
     use cfbench::output::render_text;
     use cfbench::plan::Direction;
+    use cfbench::progress::TransferTelemetry;
     use cfbench::results::{
         LatencyPoint, MetadataStatus, RpkiReachability, RpkiReachabilityStatus,
     };
@@ -171,12 +172,18 @@ mod tests {
             &'a self,
             _: u64,
             _: Option<&'a str>,
+            _: TransferTelemetry,
             _: &'a CancellationToken,
         ) -> MeasurementFuture<'a> {
             unreachable!("download is disabled")
         }
 
-        fn upload<'a>(&'a self, _: u64, _: &'a CancellationToken) -> MeasurementFuture<'a> {
+        fn upload<'a>(
+            &'a self,
+            _: u64,
+            _: TransferTelemetry,
+            _: &'a CancellationToken,
+        ) -> MeasurementFuture<'a> {
             unreachable!("upload is disabled")
         }
     }
