@@ -41,6 +41,29 @@ pub fn render_progress(event: &ProgressEvent) -> String {
                 format_duration(*adjusted_duration_ms)
             )
         }
+        ProgressEvent::TransferAdvanced {
+            direction,
+            requested_bytes,
+            current,
+            total,
+            window_bytes,
+            window_duration_ms,
+            ..
+        } => {
+            let label = format!(
+                "{} {} {current}/{total}",
+                direction_name(*direction),
+                payload_label(*requested_bytes)
+            );
+            if !window_duration_ms.is_finite() || *window_duration_ms <= 0.0 {
+                return unavailable(&label);
+            }
+            format!(
+                "[{label}] {} transferred — {:.2} Mbps",
+                payload_label(*window_bytes),
+                *window_bytes as f64 * 8.0 / *window_duration_ms / 1_000.0,
+            )
+        }
         ProgressEvent::LoadedLatencyCompleted {
             direction,
             sequence,
@@ -93,6 +116,7 @@ pub fn render_compact_progress(event: &ProgressEvent) -> Option<String> {
             payload_label(*requested_bytes),
             *bps as f64 / 1_000_000.0,
         )),
+        ProgressEvent::TransferAdvanced { .. } => None,
         ProgressEvent::LoadedLatencyCompleted { .. } => None,
         ProgressEvent::RequestFailed {
             stage: ProgressStage::LoadedLatency { .. },

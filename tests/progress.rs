@@ -131,6 +131,18 @@ fn formats_all_progress_event_lines_with_documented_units_and_punctuation() {
             "[download 100 KB 1/9] 91.42 Mbps — 11.0 ms",
         ),
         (
+            ProgressEvent::TransferAdvanced {
+                direction: Direction::Download,
+                requested_bytes: 1_000_000,
+                current: 1,
+                total: 3,
+                transferred_bytes: 400_000,
+                window_bytes: 400_000,
+                window_duration_ms: 250.0,
+            },
+            "[download 1 MB 1/3] 400 KB transferred — 12.80 Mbps",
+        ),
+        (
             ProgressEvent::LoadedLatencyCompleted {
                 direction: Direction::Download,
                 sequence: 1,
