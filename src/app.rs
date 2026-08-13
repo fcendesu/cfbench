@@ -105,9 +105,50 @@ where
 pub async fn run_with_signal_and_progress<T, S, W>(
     runner: &Runner<T>,
     signal: S,
+    options: OutputOptions,
+    progress_mode: ProgressMode,
+    stderr: W,
+) -> ProgressRunOutcome
+where
+    T: MeasurementTransport,
+    S: Future<Output = std::io::Result<()>>,
+    W: Write + Send + 'static,
+{
+    run_with_signal_and_progress_inner(runner, signal, options, progress_mode, stderr, None).await
+}
+
+/// Runs compact progress with an injected draw target for lifecycle testing.
+#[doc(hidden)]
+pub async fn run_with_signal_and_progress_with_compact_draw_target<T, S, W>(
+    runner: &Runner<T>,
+    signal: S,
+    options: OutputOptions,
+    stderr: W,
+    draw_target: ProgressDrawTarget,
+) -> ProgressRunOutcome
+where
+    T: MeasurementTransport,
+    S: Future<Output = std::io::Result<()>>,
+    W: Write + Send + 'static,
+{
+    run_with_signal_and_progress_inner(
+        runner,
+        signal,
+        options,
+        ProgressMode::Compact,
+        stderr,
+        Some(draw_target),
+    )
+    .await
+}
+
+async fn run_with_signal_and_progress_inner<T, S, W>(
+    runner: &Runner<T>,
+    signal: S,
     _options: OutputOptions,
     progress_mode: ProgressMode,
     stderr: W,
+    compact_draw_target: Option<ProgressDrawTarget>,
 ) -> ProgressRunOutcome
 where
     T: MeasurementTransport,
@@ -157,8 +198,8 @@ where
         ProgressMode::Compact => {
             drop(stderr);
             let (progress, receiver) = ProgressReporter::channel(PROGRESS_CHANNEL_CAPACITY);
-            let renderer =
-                spawn_compact_progress_renderer(receiver, ProgressDrawTarget::stderr()).ok();
+            let draw_target = compact_draw_target.unwrap_or_else(ProgressDrawTarget::stderr);
+            let renderer = spawn_compact_progress_renderer(receiver, draw_target).ok();
             let outcome = run_with_signal_inner(runner, signal, &cancellation, progress).await;
             if let Some(renderer) = renderer {
                 let _ = renderer.join();

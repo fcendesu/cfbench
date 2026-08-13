@@ -8,7 +8,8 @@ use std::time::Duration;
 
 use cfbench::app::{
     AppError, EXIT_COMPLETE, EXIT_FAILURE, EXIT_PARTIAL, OutputOptions, ProgressMode, exit_status,
-    run_with_signal, run_with_signal_and_progress, spawn_compact_progress_renderer,
+    run_with_signal, run_with_signal_and_progress,
+    run_with_signal_and_progress_with_compact_draw_target, spawn_compact_progress_renderer,
     spawn_progress_renderer, write_outcome, write_progress,
 };
 use cfbench::cancellation::CancellationToken;
@@ -136,6 +137,42 @@ async fn compact_renderer_shutdown_does_not_change_results_or_status() {
     assert_eq!(output.latency_points, 2);
     assert_eq!(output.status, EXIT_COMPLETE);
     assert!(!output.stderr.contains("latency"));
+}
+
+#[tokio::test]
+async fn compact_renderer_panic_does_not_change_outcome_or_exit_status() {
+    let options = OutputOptions {
+        json: false,
+        quiet: false,
+        verbose: false,
+    };
+    let runner = Runner::new(
+        ImmediateLatencyTransport,
+        MeasurementPlan {
+            upstream_version: "test",
+            upstream_commit: "test",
+            steps: vec![MeasurementStep::Latency { packets: 2 }],
+        },
+    )
+    .with_loaded_latency(false);
+    let renderer_panicked = Arc::new(AtomicBool::new(false));
+
+    let run = run_with_signal_and_progress_with_compact_draw_target(
+        &runner,
+        std::future::pending::<std::io::Result<()>>(),
+        options,
+        SharedWriter::default(),
+        indicatif::ProgressDrawTarget::term_like(Box::new(RecordingTerm::panicking(
+            renderer_panicked.clone(),
+        ))),
+    )
+    .await;
+
+    assert!(renderer_panicked.load(Ordering::SeqCst));
+    assert!(run.progress_error.is_none());
+    assert!(run.outcome.error.is_none());
+    assert_eq!(run.outcome.result.raw.latency.len(), 2);
+    assert_eq!(exit_status(&run.outcome), EXIT_COMPLETE);
 }
 
 #[test]
@@ -749,6 +786,7 @@ async fn run_progress_fixture(mode: ProgressMode) -> FixtureOutput {
 #[derive(Clone, Debug, Default)]
 struct RecordingTerm {
     operations: Arc<Mutex<Vec<TerminalOperation>>>,
+    panic_once: Option<Arc<AtomicBool>>,
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -757,8 +795,22 @@ enum TerminalOperation {
     Clear,
 }
 
+impl RecordingTerm {
+    fn panicking(panicked: Arc<AtomicBool>) -> Self {
+        Self {
+            panic_once: Some(panicked),
+            ..Self::default()
+        }
+    }
+}
+
 impl indicatif::TermLike for RecordingTerm {
     fn width(&self) -> u16 {
+        if let Some(panicked) = &self.panic_once
+            && !panicked.swap(true, Ordering::SeqCst)
+        {
+            panic!("scripted compact renderer panic");
+        }
         80
     }
 
