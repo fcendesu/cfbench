@@ -131,10 +131,15 @@ impl MeasurementTransport for ReqwestTransport {
     fn upload<'a>(
         &'a self,
         bytes: u64,
-        _: TransferTelemetry,
+        telemetry: TransferTelemetry,
         cancellation: &'a CancellationToken,
     ) -> MeasurementFuture<'a> {
-        Box::pin(ReqwestTransport::upload(self, bytes, cancellation))
+        Box::pin(ReqwestTransport::upload_with_telemetry(
+            self,
+            bytes,
+            Some(telemetry),
+            cancellation,
+        ))
     }
 }
 

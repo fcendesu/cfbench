@@ -88,6 +88,45 @@ async fn download_stream_reports_live_transfer_snapshots() {
 }
 
 #[tokio::test]
+async fn upload_stream_reports_live_transfer_snapshots() {
+    let server = FixtureServer::start(ResponsePlan::UploadEcho).await;
+    let runner = Runner::new(
+        transport_for(&server, IpMode::V4Only, Duration::from_secs(2)),
+        MeasurementPlan {
+            upstream_version: "test",
+            upstream_commit: "test",
+            steps: vec![MeasurementStep::Upload {
+                bytes: 150_000,
+                count: 1,
+                bypass_finish: true,
+            }],
+        },
+    )
+    .with_loaded_latency(false);
+    let (progress, receiver) = ProgressReporter::channel(16);
+
+    let outcome = runner
+        .run_with_progress(&CancellationToken::new(), progress)
+        .await;
+    let events = receiver.into_iter().collect::<Vec<_>>();
+
+    assert!(outcome.error.is_none());
+    assert!(events.iter().any(|event| {
+        matches!(
+            event,
+            ProgressEvent::TransferAdvanced {
+                direction: cfbench::plan::Direction::Upload,
+                requested_bytes: 150_000,
+                transferred_bytes: 150_000,
+                current: 1,
+                total: 1,
+                ..
+            }
+        )
+    }));
+}
+
+#[tokio::test]
 async fn rpki_request_obeys_the_selected_ip_family() {
     let server = FixtureServer::start(ResponsePlan::Exact {
         status: 200,

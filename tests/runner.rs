@@ -178,11 +178,18 @@ impl MeasurementTransport for TelemetryRecordingTransport {
 
     fn upload<'a>(
         &'a self,
-        _: u64,
-        _: TransferTelemetry,
+        bytes: u64,
+        mut telemetry: TransferTelemetry,
         _: &'a CancellationToken,
     ) -> MeasurementFuture<'a> {
-        unreachable!("test plan contains no upload operation")
+        Box::pin(async move {
+            telemetry.begin();
+            tokio::time::sleep(Duration::from_millis(1)).await;
+            telemetry.observe(bytes, true);
+            Ok(TimingObservation::from_millis(
+                20.0, 500.0, 0.0, bytes, "HTTP/1.1",
+            ))
+        })
     }
 }
 
@@ -1418,11 +1425,9 @@ async fn progress_reports_only_accepted_points_with_phase_local_counters() {
 }
 
 #[tokio::test]
-async fn upload_request_start_immediately_precedes_completion() {
+async fn upload_telemetry_stays_inside_request_lifecycle() {
     let runner = Runner::new(
-        ScriptedTransport::new([Ok(TimingObservation::from_millis(
-            20.0, 500.0, 0.0, 100_000, "HTTP/1.1",
-        ))]),
+        TelemetryRecordingTransport,
         plan(vec![MeasurementStep::Upload {
             bytes: 100_000,
             count: 1,
@@ -1430,7 +1435,7 @@ async fn upload_request_start_immediately_precedes_completion() {
         }]),
     )
     .with_loaded_latency(false);
-    let (progress, receiver) = ProgressReporter::channel(2);
+    let (progress, receiver) = ProgressReporter::channel(3);
 
     let outcome = runner
         .run_with_progress(&CancellationToken::new(), progress)
@@ -1438,8 +1443,8 @@ async fn upload_request_start_immediately_precedes_completion() {
     let events: Vec<_> = receiver.into_iter().collect();
 
     assert!(outcome.error.is_none());
-    assert_eq!(
-        events,
+    assert!(matches!(
+        events.as_slice(),
         [
             ProgressEvent::RequestStarted {
                 stage: ProgressStage::Transfer {
@@ -1448,6 +1453,14 @@ async fn upload_request_start_immediately_precedes_completion() {
                 },
                 current: Some(1),
                 total: Some(1),
+            },
+            ProgressEvent::TransferAdvanced {
+                direction: Direction::Upload,
+                requested_bytes: 100_000,
+                current: 1,
+                total: 1,
+                transferred_bytes: 100_000,
+                ..
             },
             ProgressEvent::TransferCompleted {
                 direction: Direction::Upload,
@@ -1458,7 +1471,7 @@ async fn upload_request_start_immediately_precedes_completion() {
                 adjusted_duration_ms: 20.0,
             },
         ]
-    );
+    ));
 }
 
 #[tokio::test]

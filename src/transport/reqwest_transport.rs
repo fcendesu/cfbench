@@ -17,7 +17,7 @@ use crate::results::{NetworkMetadata, RpkiReachability, RpkiReachabilityStatus};
 
 use super::metadata::{MetadataDecodeError, metadata_from_slice};
 use super::server_timing::server_duration;
-use super::upload_body::stream_upload;
+use super::upload_body::stream_upload_with_telemetry;
 
 const CLOUDFLARE_BASE_URL: &str = "https://speed.cloudflare.com";
 const SERVER_TIMING: &str = "server-timing";
@@ -249,9 +249,19 @@ impl ReqwestTransport {
         bytes: u64,
         cancellation: &CancellationToken,
     ) -> Result<TimingObservation, TransportError> {
+        self.upload_with_telemetry(bytes, None, cancellation).await
+    }
+
+    pub(crate) async fn upload_with_telemetry(
+        &self,
+        bytes: u64,
+        telemetry: Option<TransferTelemetry>,
+        cancellation: &CancellationToken,
+    ) -> Result<TimingObservation, TransportError> {
         let url = self.endpoint("__up")?;
         let endpoint = redacted_endpoint(&url);
-        let (stream, content_length, yielded_bytes) = stream_upload(bytes);
+        let (stream, content_length, yielded_bytes) =
+            stream_upload_with_telemetry(bytes, telemetry);
         let request = self
             .client
             .post(url)
