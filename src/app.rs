@@ -1,9 +1,9 @@
 use std::future::{Future, poll_fn};
 use std::io::Write;
-use std::sync::mpsc::Receiver;
+use std::sync::mpsc::{Receiver, RecvTimeoutError};
 use std::task::Poll;
 use std::thread::JoinHandle;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
 use thiserror::Error;
@@ -16,8 +16,8 @@ use crate::runner::{MeasurementTransport, RunOutcome, Runner, RunnerError};
 
 const PROGRESS_CHANNEL_CAPACITY: usize = 256;
 const OPENING_PROGRESS_LINE: &str = "Testing against Cloudflare edge...";
-const COMPACT_TICK: Duration = Duration::from_millis(120);
-const COMPACT_TICKS: &[&str] = &["|", "/", "-", "\\", " "];
+const COMPACT_REFRESH_INTERVAL: Duration = Duration::from_millis(250);
+const COMPACT_SPINNER_FRAMES: &[&str] = &["|", "/", "-", "\\"];
 
 pub const EXIT_COMPLETE: u8 = 0;
 pub const EXIT_FAILURE: u8 = 1;
@@ -253,21 +253,94 @@ pub fn spawn_compact_progress_renderer(
         .spawn(move || {
             let spinner = ProgressBar::with_draw_target(None, draw_target);
             spinner.set_style(
-                ProgressStyle::with_template("{spinner} {wide_msg}")
-                    .expect("constant compact progress template is valid")
-                    .tick_strings(COMPACT_TICKS),
+                ProgressStyle::with_template("{wide_msg}")
+                    .expect("constant compact progress template is valid"),
             );
-            spinner.set_message(OPENING_PROGRESS_LINE);
-            spinner.enable_steady_tick(COMPACT_TICK);
-            let mut state = CompactProgressState::default();
-            for event in receiver {
-                if let Some(message) = state.render(&event) {
-                    spinner.set_message(message);
+            let mut pump = CompactRenderPump::new(Instant::now());
+            spinner.set_message(pump.opening_frame());
+
+            loop {
+                match receiver.recv_timeout(pump.time_until_refresh(Instant::now())) {
+                    Ok(event) => {
+                        if let Some(frame) = pump.apply_event(&event, Instant::now()) {
+                            spinner.set_message(frame);
+                        }
+                    }
+                    Err(RecvTimeoutError::Timeout) => {
+                        if let Some(frame) = pump.refresh(Instant::now()) {
+                            spinner.set_message(frame);
+                        }
+                    }
+                    Err(RecvTimeoutError::Disconnected) => break,
                 }
+            }
+
+            if let Some(frame) = pump.finish() {
+                spinner.set_message(frame);
             }
             spinner.finish_and_clear();
         })
         .map_err(AppError::Write)
+}
+
+/// Coalesces compact progress events and produces at most one regular frame per interval.
+///
+/// The renderer drives this pump with a monotonic clock. Keeping the timing policy here makes
+/// event bursts deterministic to test and avoids independent Indicatif redraw paths.
+struct CompactRenderPump {
+    state: CompactProgressState,
+    pending_message: String,
+    rendered_message: Option<String>,
+    next_refresh_at: Instant,
+    spinner_frame: usize,
+}
+
+impl CompactRenderPump {
+    fn new(started: Instant) -> Self {
+        Self {
+            state: CompactProgressState::default(),
+            pending_message: OPENING_PROGRESS_LINE.to_owned(),
+            rendered_message: None,
+            next_refresh_at: started + COMPACT_REFRESH_INTERVAL,
+            spinner_frame: 0,
+        }
+    }
+
+    fn opening_frame(&mut self) -> String {
+        self.render_frame()
+    }
+
+    fn apply_event(&mut self, event: &ProgressEvent, now: Instant) -> Option<String> {
+        if let Some(message) = self.state.render(event) {
+            self.pending_message = message;
+        }
+        self.refresh(now)
+    }
+
+    fn refresh(&mut self, now: Instant) -> Option<String> {
+        if now < self.next_refresh_at {
+            return None;
+        }
+
+        self.next_refresh_at = now + COMPACT_REFRESH_INTERVAL;
+        Some(self.render_frame())
+    }
+
+    fn time_until_refresh(&self, now: Instant) -> Duration {
+        self.next_refresh_at.saturating_duration_since(now)
+    }
+
+    fn finish(&mut self) -> Option<String> {
+        (self.rendered_message.as_deref() != Some(self.pending_message.as_str()))
+            .then(|| self.render_frame())
+    }
+
+    fn render_frame(&mut self) -> String {
+        let spinner = COMPACT_SPINNER_FRAMES[self.spinner_frame];
+        self.spinner_frame = (self.spinner_frame + 1) % COMPACT_SPINNER_FRAMES.len();
+        self.rendered_message = Some(self.pending_message.clone());
+        format!("{spinner} {}", self.pending_message)
+    }
 }
 
 async fn run_with_signal_inner<T, S>(
@@ -444,4 +517,114 @@ fn ensure_cancelled_outcome(outcome: &mut RunOutcome) {
     };
     outcome.result.failures.push(error.to_string());
     outcome.error = Some(error);
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::{Duration, Instant};
+
+    use super::*;
+    use crate::plan::Direction;
+    use crate::progress::ProgressStage;
+
+    #[test]
+    fn compact_render_pump_caps_regular_frames_at_two_hundred_fifty_milliseconds() {
+        let started = Instant::now();
+        let mut pump = CompactRenderPump::new(started);
+
+        assert_eq!(pump.opening_frame(), "| Testing against Cloudflare edge...");
+        assert_eq!(
+            pump.apply_event(
+                &ProgressEvent::RequestStarted {
+                    stage: ProgressStage::Transfer {
+                        direction: Direction::Download,
+                        requested_bytes: 100_000_000,
+                    },
+                    current: Some(1),
+                    total: Some(3),
+                },
+                started + Duration::from_millis(50),
+            ),
+            None,
+        );
+        assert_eq!(
+            pump.apply_event(
+                &ProgressEvent::TransferAdvanced {
+                    direction: Direction::Download,
+                    requested_bytes: 100_000_000,
+                    current: 1,
+                    total: 3,
+                    transferred_bytes: 63_000_000,
+                    window_bytes: 20_062_500,
+                    window_duration_ms: 250.0,
+                },
+                started + Duration::from_millis(120),
+            ),
+            None,
+        );
+        assert_eq!(pump.refresh(started + Duration::from_millis(249)), None);
+        assert_eq!(
+            pump.refresh(started + Duration::from_millis(250)),
+            Some("/ Download 100 MB 1/3 · 642 Mbps · 63%".to_owned()),
+        );
+
+        assert_eq!(
+            pump.apply_event(
+                &ProgressEvent::LoadedLatencyCompleted {
+                    direction: Direction::Download,
+                    sequence: 1,
+                    latency_ms: 32.4,
+                },
+                started + Duration::from_millis(300),
+            ),
+            None,
+        );
+        assert_eq!(pump.refresh(started + Duration::from_millis(499)), None);
+        assert_eq!(
+            pump.refresh(started + Duration::from_millis(500)),
+            Some("- Download 100 MB 1/3 · 642 Mbps · 63% · loaded 32.4 ms".to_owned()),
+        );
+    }
+
+    #[test]
+    fn compact_render_pump_forces_a_pending_final_frame() {
+        let started = Instant::now();
+        let mut pump = CompactRenderPump::new(started);
+        let _ = pump.opening_frame();
+
+        assert_eq!(
+            pump.apply_event(
+                &ProgressEvent::RequestStarted {
+                    stage: ProgressStage::Transfer {
+                        direction: Direction::Upload,
+                        requested_bytes: 50_000_000,
+                    },
+                    current: Some(2),
+                    total: Some(3),
+                },
+                started + Duration::from_millis(40),
+            ),
+            None,
+        );
+        assert_eq!(
+            pump.apply_event(
+                &ProgressEvent::TransferCompleted {
+                    direction: Direction::Upload,
+                    requested_bytes: 50_000_000,
+                    current: 2,
+                    total: 3,
+                    bps: 318_000_000,
+                    adjusted_duration_ms: 1_250.0,
+                },
+                started + Duration::from_millis(80),
+            ),
+            None,
+        );
+
+        assert_eq!(
+            pump.finish(),
+            Some("/ Upload 50 MB 2/3 · 318 Mbps · 100%".to_owned()),
+        );
+        assert_eq!(pump.finish(), None);
+    }
 }

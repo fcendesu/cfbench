@@ -50,13 +50,33 @@ async fn upload_stream_reports_bounded_live_telemetry() {
     assert_eq!(lengths, vec![65_536, 65_536, 18_928]);
 
     let events = receiver.into_iter().collect::<Vec<_>>();
-    assert!(events.iter().any(|event| matches!(
-        event,
-        ProgressEvent::TransferAdvanced {
-            direction: Direction::Upload,
-            transferred_bytes,
-            requested_bytes: 150_000,
-            ..
-        } if *transferred_bytes > 0 && *transferred_bytes <= 150_000
-    )));
+    let intermediate = events
+        .iter()
+        .position(|event| {
+            matches!(
+                event,
+                ProgressEvent::TransferAdvanced {
+                    direction: Direction::Upload,
+                    transferred_bytes,
+                    requested_bytes: 150_000,
+                    ..
+                } if *transferred_bytes > 0 && *transferred_bytes < 150_000
+            )
+        })
+        .expect("upload telemetry includes a distinct intermediate snapshot");
+    let final_snapshot = events
+        .iter()
+        .position(|event| {
+            matches!(
+                event,
+                ProgressEvent::TransferAdvanced {
+                    direction: Direction::Upload,
+                    transferred_bytes: 150_000,
+                    requested_bytes: 150_000,
+                    ..
+                }
+            )
+        })
+        .expect("upload telemetry includes the final snapshot");
+    assert!(intermediate < final_snapshot);
 }

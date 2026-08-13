@@ -185,7 +185,7 @@ fn compact_state_rejects_invalid_transfer_telemetry_and_finishes_authoritatively
 }
 
 #[test]
-fn compact_state_clears_matching_primary_failure_and_ignores_loaded_failures() {
+fn compact_state_loaded_failure_preserves_active_transfer_until_primary_failure() {
     let mut state = CompactProgressState::default();
     state.render(&ProgressEvent::RequestStarted {
         stage: ProgressStage::Transfer {
@@ -195,21 +195,6 @@ fn compact_state_clears_matching_primary_failure_and_ignores_loaded_failures() {
         current: Some(1),
         total: Some(3),
     });
-    let rendered = state
-        .render(&ProgressEvent::RequestFailed {
-            stage: ProgressStage::Transfer {
-                direction: Direction::Upload,
-                requested_bytes: 50_000_000,
-            },
-            current: Some(1),
-            total: Some(3),
-            kind: ProgressFailureKind::Timeout,
-        })
-        .expect("request failures retain the safe failure category");
-
-    assert_eq!(rendered, "Upload 50 MB 1/3 · failed: timeout");
-    assert!(!rendered.contains("fixture.invalid"));
-    assert!(!rendered.contains("https://"));
     assert_eq!(
         state.render(&ProgressEvent::RequestFailed {
             stage: ProgressStage::LoadedLatency {
@@ -221,6 +206,34 @@ fn compact_state_clears_matching_primary_failure_and_ignores_loaded_failures() {
         }),
         None,
     );
+    assert_eq!(
+        state.render(&ProgressEvent::TransferAdvanced {
+            direction: Direction::Upload,
+            requested_bytes: 50_000_000,
+            current: 1,
+            total: 3,
+            transferred_bytes: 10_000_000,
+            window_bytes: 5_000_000,
+            window_duration_ms: 250.0,
+        }),
+        Some("Upload 50 MB 1/3 · 160 Mbps · 20%".to_owned()),
+    );
+
+    let rendered = state
+        .render(&ProgressEvent::RequestFailed {
+            stage: ProgressStage::Transfer {
+                direction: Direction::Upload,
+                requested_bytes: 50_000_000,
+            },
+            current: Some(1),
+            total: Some(3),
+            kind: ProgressFailureKind::Timeout,
+        })
+        .expect("primary request failures retain the safe failure category");
+
+    assert_eq!(rendered, "Upload 50 MB 1/3 · failed: timeout");
+    assert!(!rendered.contains("fixture.invalid"));
+    assert!(!rendered.contains("https://"));
 }
 
 #[test]
