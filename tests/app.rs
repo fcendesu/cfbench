@@ -7,15 +7,15 @@ use std::task::{Context, Poll};
 use std::time::Duration;
 
 use cfbench::app::{
-    AppError, EXIT_COMPLETE, EXIT_FAILURE, EXIT_PARTIAL, OutputOptions, exit_status,
-    run_with_signal, run_with_signal_and_progress, spawn_progress_renderer, write_outcome,
-    write_progress,
+    AppError, EXIT_COMPLETE, EXIT_FAILURE, EXIT_PARTIAL, OutputOptions, ProgressMode, exit_status,
+    run_with_signal, run_with_signal_and_progress, spawn_compact_progress_renderer,
+    spawn_progress_renderer, write_outcome, write_progress,
 };
 use cfbench::cancellation::CancellationToken;
 use cfbench::error::TransportError;
 use cfbench::measurement::TimingObservation;
 use cfbench::plan::{MeasurementPlan, MeasurementStep};
-use cfbench::progress::{ProgressEvent, ProgressReporter};
+use cfbench::progress::{ProgressEvent, ProgressReporter, ProgressStage};
 use cfbench::results::{EdgeLocation, LatencyPoint, MetadataStatus, NetworkMetadata, RunResult};
 use cfbench::runner::{MeasurementFuture, MeasurementTransport, RunOutcome, Runner, RunnerError};
 
@@ -53,8 +53,6 @@ fn cancellation_is_failure_even_after_an_accepted_point() {
 
 #[test]
 fn output_options_select_progress_mode_from_flags_and_terminal_state() {
-    use cfbench::app::ProgressMode;
-
     let cases = [
         (
             OutputOptions {
@@ -118,31 +116,60 @@ fn output_options_select_progress_mode_from_flags_and_terminal_state() {
 }
 
 #[tokio::test]
-async fn progress_requires_verbose_text_mode() {
-    let plain = run_progress_fixture(OutputOptions {
-        json: false,
-        quiet: false,
-        verbose: false,
-    })
-    .await;
-    assert!(!plain.stderr.contains("Testing against Cloudflare edge"));
+async fn verbose_mode_keeps_permanent_progress_lines() {
+    let output = run_progress_fixture(ProgressMode::Verbose).await;
+    assert!(output.stderr.contains("Testing against Cloudflare edge"));
+    assert!(output.stderr.contains("[latency 1/2] started"));
+    assert!(output.stderr.contains("[latency 1/2]"));
+}
 
-    let verbose = run_progress_fixture(OutputOptions {
-        json: false,
-        quiet: false,
-        verbose: true,
-    })
-    .await;
-    assert!(verbose.stderr.contains("Testing against Cloudflare edge"));
+#[tokio::test]
+async fn disabled_mode_writes_no_progress() {
+    let output = run_progress_fixture(ProgressMode::Disabled).await;
+    assert!(!output.stderr.contains("Testing against Cloudflare edge"));
+    assert!(!output.stderr.contains("latency"));
+}
 
-    let json = run_progress_fixture(OutputOptions {
-        json: true,
-        quiet: false,
-        verbose: true,
-    })
-    .await;
-    assert!(!json.stderr.contains("Testing against Cloudflare edge"));
-    serde_json::from_str::<serde_json::Value>(&json.stdout).unwrap();
+#[tokio::test]
+async fn compact_renderer_shutdown_does_not_change_results_or_status() {
+    let output = run_progress_fixture(ProgressMode::Compact).await;
+    assert_eq!(output.latency_points, 2);
+    assert_eq!(output.status, EXIT_COMPLETE);
+    assert!(!output.stderr.contains("latency"));
+}
+
+#[test]
+fn compact_renderer_draws_one_status_and_clears_without_permanent_history() {
+    let terminal = RecordingTerm::default();
+    let operations = terminal.operations.clone();
+    let (reporter, receiver) = ProgressReporter::channel(2);
+    let renderer = spawn_compact_progress_renderer(
+        receiver,
+        indicatif::ProgressDrawTarget::term_like(Box::new(terminal)),
+    )
+    .unwrap();
+
+    reporter.emit(ProgressEvent::RequestStarted {
+        stage: ProgressStage::Latency,
+        current: Some(1),
+        total: Some(1),
+    });
+    reporter.emit(ProgressEvent::LatencyCompleted {
+        current: 1,
+        total: 1,
+        latency_ms: 12.5,
+    });
+    drop(reporter);
+    renderer.join().unwrap();
+
+    let operations = operations.lock().unwrap();
+    assert!(operations.iter().any(
+        |operation| matches!(operation, TerminalOperation::Draw(text) if text.contains("Latency 1/1"))
+    ));
+    assert_eq!(operations.last(), Some(&TerminalOperation::Clear));
+    assert!(operations.iter().all(
+        |operation| !matches!(operation, TerminalOperation::Draw(text) if text.contains('\n'))
+    ));
 }
 
 #[test]
@@ -175,32 +202,13 @@ fn progress_renderer_writes_and_flushes_each_line_then_joins_on_channel_closure(
 #[test]
 fn opening_progress_line_flushes_and_respects_suppression() {
     let mut text = SharedWriter::default();
-    write_progress(
-        OutputOptions {
-            json: false,
-            quiet: false,
-            verbose: true,
-        },
-        &mut text,
-    )
-    .unwrap();
+    write_progress(ProgressMode::Verbose, &mut text).unwrap();
     assert_eq!(text.text(), "Testing against Cloudflare edge...\n");
     assert_eq!(text.flushes(), 1);
 
-    for options in [
-        OutputOptions {
-            json: false,
-            quiet: true,
-            verbose: true,
-        },
-        OutputOptions {
-            json: true,
-            quiet: false,
-            verbose: true,
-        },
-    ] {
+    for mode in [ProgressMode::Disabled, ProgressMode::Compact] {
         let mut suppressed = SharedWriter::default();
-        write_progress(options, &mut suppressed).unwrap();
+        write_progress(mode, &mut suppressed).unwrap();
         assert!(suppressed.text().is_empty());
         assert_eq!(suppressed.flushes(), 0);
     }
@@ -229,6 +237,7 @@ async fn renderer_write_failure_cancels_runner_and_is_retained_after_join() {
                 quiet: false,
                 verbose: true,
             },
+            ProgressMode::Verbose,
             BlockingFailureWriter(lifecycle.clone()),
         ),
     )
@@ -272,6 +281,7 @@ async fn renderer_failure_after_channel_fills_does_not_deadlock_or_change_result
                 quiet: false,
                 verbose: true,
             },
+            ProgressMode::Verbose,
             FailAfterAllRequestsWriter(lifecycle),
         ),
     )
@@ -299,7 +309,7 @@ fn json_mode_writes_one_partial_document_without_progress_then_returns_one() {
     };
     let mut stdout = Vec::new();
     let mut stderr = Vec::new();
-    write_progress(options, &mut stderr).unwrap();
+    write_progress(ProgressMode::Disabled, &mut stderr).unwrap();
     let exit = write_outcome(partial_failure(), options, &mut stdout, &mut stderr).unwrap();
 
     assert_eq!(exit, 1);
@@ -690,11 +700,17 @@ fn fixture_error() -> TransportError {
 }
 
 struct FixtureOutput {
-    stdout: String,
     stderr: String,
+    latency_points: usize,
+    status: u8,
 }
 
-async fn run_progress_fixture(options: OutputOptions) -> FixtureOutput {
+async fn run_progress_fixture(mode: ProgressMode) -> FixtureOutput {
+    let options = OutputOptions {
+        json: false,
+        quiet: false,
+        verbose: mode == ProgressMode::Verbose,
+    };
     let writer = SharedWriter::default();
     let inspection = writer.clone();
     let runner = Runner::new(
@@ -711,19 +727,83 @@ async fn run_progress_fixture(options: OutputOptions) -> FixtureOutput {
         &runner,
         std::future::pending::<std::io::Result<()>>(),
         options,
+        mode,
         writer,
     )
     .await;
     assert!(run.progress_error.is_none());
+    let latency_points = run.outcome.result.raw.latency.len();
 
     let mut stdout = Vec::new();
     let mut final_stderr = inspection.clone();
-    let exit = write_outcome(run.outcome, options, &mut stdout, &mut final_stderr).unwrap();
-    assert_eq!(exit, 0);
+    let status = write_outcome(run.outcome, options, &mut stdout, &mut final_stderr).unwrap();
+    assert_eq!(status, EXIT_COMPLETE);
 
     FixtureOutput {
-        stdout: String::from_utf8(stdout).unwrap(),
         stderr: inspection.text(),
+        latency_points,
+        status,
+    }
+}
+
+#[derive(Clone, Debug, Default)]
+struct RecordingTerm {
+    operations: Arc<Mutex<Vec<TerminalOperation>>>,
+}
+
+#[derive(Debug, Eq, PartialEq)]
+enum TerminalOperation {
+    Draw(String),
+    Clear,
+}
+
+impl indicatif::TermLike for RecordingTerm {
+    fn width(&self) -> u16 {
+        80
+    }
+
+    fn move_cursor_up(&self, _: usize) -> std::io::Result<()> {
+        Ok(())
+    }
+
+    fn move_cursor_down(&self, _: usize) -> std::io::Result<()> {
+        Ok(())
+    }
+
+    fn move_cursor_right(&self, _: usize) -> std::io::Result<()> {
+        Ok(())
+    }
+
+    fn move_cursor_left(&self, _: usize) -> std::io::Result<()> {
+        Ok(())
+    }
+
+    fn write_line(&self, text: &str) -> std::io::Result<()> {
+        self.operations
+            .lock()
+            .unwrap()
+            .push(TerminalOperation::Draw(format!("{text}\n")));
+        Ok(())
+    }
+
+    fn write_str(&self, text: &str) -> std::io::Result<()> {
+        self.operations
+            .lock()
+            .unwrap()
+            .push(TerminalOperation::Draw(text.to_owned()));
+        Ok(())
+    }
+
+    fn clear_line(&self) -> std::io::Result<()> {
+        self.operations
+            .lock()
+            .unwrap()
+            .push(TerminalOperation::Clear);
+        Ok(())
+    }
+
+    fn flush(&self) -> std::io::Result<()> {
+        Ok(())
     }
 }
 

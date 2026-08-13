@@ -1,4 +1,4 @@
-use std::io::{self, Write};
+use std::io::{self, IsTerminal, Write};
 use std::process::ExitCode;
 
 use cfbench::app::{
@@ -33,19 +33,21 @@ async fn run(cli: Cli, config: RunConfig) -> ExitCode {
         quiet: cli.quiet,
         verbose: cli.verbose,
     };
+    let progress_mode = options.progress_mode(io::stderr().is_terminal());
     let (outcome, progress_error) = match prepare_runner(&config, ReqwestTransport::new) {
         Ok(runner) => {
             let run = run_with_signal_and_progress(
                 &runner,
                 tokio::signal::ctrl_c(),
                 options,
+                progress_mode,
                 io::stderr(),
             )
             .await;
             (run.outcome, run.progress_error)
         }
         Err(outcome) => {
-            let progress_error = write_progress(options, &mut io::stderr().lock()).err();
+            let progress_error = write_progress(progress_mode, &mut io::stderr().lock()).err();
             (*outcome, progress_error)
         }
     };
