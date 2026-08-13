@@ -162,9 +162,6 @@ impl TransferTelemetry {
         if self.finished {
             return;
         }
-        if finished {
-            self.finished = true;
-        }
         if transferred_bytes > self.requested_bytes {
             return;
         }
@@ -196,6 +193,7 @@ impl TransferTelemetry {
             window_duration_ms: window_duration.as_secs_f64() * 1_000.0,
         });
         self.last_sample = Some((observed_at, transferred_bytes));
+        self.finished = finished;
     }
 }
 
@@ -276,6 +274,30 @@ mod tests {
             }
         );
         assert!(receiver.try_recv().is_err());
+    }
+
+    #[test]
+    fn transfer_telemetry_allows_a_valid_final_sample_after_an_invalid_one() {
+        let (reporter, receiver) = ProgressReporter::channel(1);
+        let started = Instant::now();
+        let mut telemetry = TransferTelemetry::new(reporter, Direction::Upload, 1_000, 2, 3);
+        telemetry.begin_at(started);
+
+        telemetry.observe_at(1_001, started + Duration::from_millis(10), true);
+        telemetry.observe_at(1_000, started + Duration::from_millis(20), true);
+
+        assert_eq!(
+            receiver.try_recv().unwrap(),
+            ProgressEvent::TransferAdvanced {
+                direction: Direction::Upload,
+                requested_bytes: 1_000,
+                current: 2,
+                total: 3,
+                transferred_bytes: 1_000,
+                window_bytes: 1_000,
+                window_duration_ms: 20.0,
+            }
+        );
     }
 
     #[test]
