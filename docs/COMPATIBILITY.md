@@ -22,12 +22,15 @@ When `Server-Timing` has no usable Cloudflare duration, cfbench follows v1.13.0 
 
 ## Automation and diagnostics
 
-Ordinary text mode prints the final summary without per-request progress.
-`--verbose` enables live line-oriented progress on stderr. `--json` emits one
-schema-v1 document on stdout without progress. `--quiet` emits no normal output
-and reports the outcome through its exit status; a complete quiet run is fully
+On an interactive terminal, ordinary text mode shows one transient, single-line
+progress indicator and clears it before the final summary. `--verbose` prints
+permanent per-request lines instead. For redirected default output and in
+`--json` and `--quiet` modes, dynamic progress is not emitted. `--json` emits
+one schema-v1 document on stdout, while `--quiet` emits no normal output and
+reports the outcome through its exit status; a complete quiet run is fully
 silent, while partial and failed runs may print only their terminal error to
-stderr. `--quiet` cannot be combined with `--json` or `--verbose`.
+stderr. `--quiet` cannot be combined with `--json` or `--verbose`. Progress
+rendering does not change measurement timing or schema-v1 output.
 
 Exit status `0` means complete, `1` means failure, cancellation, or no usable
 measurement, `2` means invalid command-line usage, and `3` means a usable

@@ -24,6 +24,8 @@ cargo install --path .
 
 ## Usage
 
+Use --verbose when permanent per-request diagnostics are preferred.
+
 ```bash
 cfbench
 cfbench --ipv4
@@ -35,7 +37,9 @@ cfbench --json > result.json
 cfbench --quiet --timeout 60
 ```
 
-Run `cfbench --help` for the complete option list. Progress and diagnostics use stderr. `--verbose` enables live per-request progress.
+Run `cfbench --help` for the complete option list. Progress and diagnostics use stderr.
+
+On an interactive terminal, ordinary text mode shows one transient, single-line progress indicator and clears it before the final summary. `--verbose` prints permanent per-request lines instead. For redirected default output and in `--json` and `--quiet` modes, dynamic progress is not emitted.
 
 For automation, `--json` emits one schema-v1 document, while `--quiet` emits no
 normal output and reports the outcome through its exit status. A complete quiet

@@ -7,6 +7,10 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+### Added
+
+- Interactive terminal runs now show a lightweight, single-line dynamic progress spinner; `--verbose` retains permanent per-request lines and automation output remains unchanged.
+
 ## [0.3.2] - 2026-08-05
 
 ### Compatibility

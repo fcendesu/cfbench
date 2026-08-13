@@ -6,6 +6,11 @@ const UNAVAILABLE: &str = "unavailable";
 /// Renders one stable, line-oriented progress event without terminal control.
 pub fn render_progress(event: &ProgressEvent) -> String {
     match event {
+        ProgressEvent::RequestStarted {
+            stage,
+            current,
+            total,
+        } => format!("[{}] started", failure_label(*stage, *current, *total)),
         ProgressEvent::LatencyCompleted {
             current,
             total,
@@ -58,6 +63,88 @@ pub fn render_progress(event: &ProgressEvent) -> String {
             "[{}] larger payload groups skipped — request duration threshold reached",
             direction_name(*direction)
         ),
+    }
+}
+
+/// Renders the active terminal status for a progress event.
+pub fn render_compact_progress(event: &ProgressEvent) -> Option<String> {
+    match event {
+        ProgressEvent::RequestStarted {
+            stage,
+            current,
+            total,
+        } => Some(compact_stage(*stage, *current, *total)),
+        ProgressEvent::LatencyCompleted {
+            current,
+            total,
+            latency_ms,
+        } => valid_nonnegative(*latency_ms)
+            .then(|| format!("Latency {current}/{total} - {latency_ms:.2} ms")),
+        ProgressEvent::TransferCompleted {
+            direction,
+            requested_bytes,
+            current,
+            total,
+            bps,
+            ..
+        } => Some(format!(
+            "{} {} {current}/{total} - {:.2} Mbps",
+            title_direction(*direction),
+            payload_label(*requested_bytes),
+            *bps as f64 / 1_000_000.0,
+        )),
+        ProgressEvent::LoadedLatencyCompleted { .. } => None,
+        ProgressEvent::RequestFailed {
+            stage: ProgressStage::LoadedLatency { .. },
+            ..
+        } => None,
+        ProgressEvent::RequestFailed {
+            stage,
+            current,
+            total,
+            kind,
+        } => Some(format!(
+            "{} - failed: {}",
+            compact_stage(*stage, *current, *total),
+            failure_detail(*kind),
+        )),
+        ProgressEvent::DirectionFinished { direction } => {
+            Some(format!("{} complete", title_direction(*direction)))
+        }
+    }
+}
+
+fn valid_nonnegative(value: f64) -> bool {
+    value.is_finite() && value >= 0.0
+}
+
+const fn title_direction(direction: Direction) -> &'static str {
+    match direction {
+        Direction::Download => "Download",
+        Direction::Upload => "Upload",
+    }
+}
+
+fn compact_stage(stage: ProgressStage, current: Option<u16>, total: Option<u16>) -> String {
+    let label = match stage {
+        ProgressStage::Latency => "Latency".to_owned(),
+        ProgressStage::Transfer {
+            direction,
+            requested_bytes,
+        } => format!(
+            "{} {}",
+            title_direction(direction),
+            payload_label(requested_bytes)
+        ),
+        ProgressStage::LoadedLatency { direction } => {
+            format!("{} loaded latency", title_direction(direction))
+        }
+    };
+    match (current, total) {
+        (Some(current), Some(total)) => format!("{label} {current}/{total}"),
+        (Some(current), None) => format!("{label} {current}"),
+        (None, Some(total)) => format!("{label} ?/{total}"),
+        (None, None) => label,
     }
 }
 

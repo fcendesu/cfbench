@@ -3,17 +3,21 @@ use std::io::Write;
 use std::sync::mpsc::Receiver;
 use std::task::Poll;
 use std::thread::JoinHandle;
+use std::time::Duration;
 
+use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
 use thiserror::Error;
 
 use crate::cancellation::CancellationToken;
 use crate::error::OutputError;
-use crate::output::{render_json, render_progress, render_text};
+use crate::output::{render_compact_progress, render_json, render_progress, render_text};
 use crate::progress::{ProgressEvent, ProgressReporter};
 use crate::runner::{MeasurementTransport, RunOutcome, Runner, RunnerError};
 
 const PROGRESS_CHANNEL_CAPACITY: usize = 256;
 const OPENING_PROGRESS_LINE: &str = "Testing against Cloudflare edge...";
+const COMPACT_TICK: Duration = Duration::from_millis(120);
+const COMPACT_TICKS: &[&str] = &["|", "/", "-", "\\", " "];
 
 pub const EXIT_COMPLETE: u8 = 0;
 pub const EXIT_FAILURE: u8 = 1;
@@ -33,6 +37,13 @@ pub struct OutputOptions {
     pub verbose: bool,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ProgressMode {
+    Disabled,
+    Compact,
+    Verbose,
+}
+
 impl OutputOptions {
     fn final_output(self) -> FinalOutput {
         if self.quiet {
@@ -44,8 +55,16 @@ impl OutputOptions {
         }
     }
 
-    fn progress_enabled(self) -> bool {
-        self.verbose && !self.quiet && !self.json
+    pub fn progress_mode(self, stderr_is_terminal: bool) -> ProgressMode {
+        if self.quiet || self.json {
+            ProgressMode::Disabled
+        } else if self.verbose {
+            ProgressMode::Verbose
+        } else if stderr_is_terminal {
+            ProgressMode::Compact
+        } else {
+            ProgressMode::Disabled
+        }
     }
 }
 
@@ -79,15 +98,15 @@ where
     run_with_signal_inner(runner, signal, &cancellation, ProgressReporter::disabled()).await
 }
 
-/// Runs with live line-oriented progress only for verbose, non-quiet text.
+/// Runs with the selected progress lifecycle without changing measurement ownership.
 ///
-/// The renderer owns its blocking writer on a dedicated thread. The thread is
-/// joined after the runner (including loaded probes) has released every sender
-/// clone and before this function returns to final-result rendering.
+/// A renderer is joined after the runner (including loaded probes) has released
+/// every sender clone and before this function returns to final-result rendering.
 pub async fn run_with_signal_and_progress<T, S, W>(
     runner: &Runner<T>,
     signal: S,
     options: OutputOptions,
+    progress_mode: ProgressMode,
     stderr: W,
 ) -> ProgressRunOutcome
 where
@@ -95,43 +114,101 @@ where
     S: Future<Output = std::io::Result<()>>,
     W: Write + Send + 'static,
 {
+    run_with_signal_and_progress_inner(runner, signal, options, progress_mode, stderr, None).await
+}
+
+/// Runs compact progress with an injected draw target for lifecycle testing.
+#[doc(hidden)]
+pub async fn run_with_signal_and_progress_with_compact_draw_target<T, S, W>(
+    runner: &Runner<T>,
+    signal: S,
+    options: OutputOptions,
+    stderr: W,
+    draw_target: ProgressDrawTarget,
+) -> ProgressRunOutcome
+where
+    T: MeasurementTransport,
+    S: Future<Output = std::io::Result<()>>,
+    W: Write + Send + 'static,
+{
+    run_with_signal_and_progress_inner(
+        runner,
+        signal,
+        options,
+        ProgressMode::Compact,
+        stderr,
+        Some(draw_target),
+    )
+    .await
+}
+
+async fn run_with_signal_and_progress_inner<T, S, W>(
+    runner: &Runner<T>,
+    signal: S,
+    _options: OutputOptions,
+    progress_mode: ProgressMode,
+    stderr: W,
+    compact_draw_target: Option<ProgressDrawTarget>,
+) -> ProgressRunOutcome
+where
+    T: MeasurementTransport,
+    S: Future<Output = std::io::Result<()>>,
+    W: Write + Send + 'static,
+{
     let cancellation = CancellationToken::new();
-    if !options.progress_enabled() {
-        drop(stderr);
-        return ProgressRunOutcome {
-            outcome: run_with_signal_inner(
-                runner,
-                signal,
-                &cancellation,
-                ProgressReporter::disabled(),
-            )
-            .await,
-            progress_error: None,
-        };
-    }
-
-    let (progress, receiver) = ProgressReporter::channel(PROGRESS_CHANNEL_CAPACITY);
-    let renderer = spawn_progress_renderer(receiver, stderr, cancellation.clone());
-    let mut progress_error = None;
-    let renderer = match renderer {
-        Ok(renderer) => Some(renderer),
-        Err(error) => {
-            progress_error = Some(error);
-            None
+    match progress_mode {
+        ProgressMode::Disabled => {
+            drop(stderr);
+            ProgressRunOutcome {
+                outcome: run_with_signal_inner(
+                    runner,
+                    signal,
+                    &cancellation,
+                    ProgressReporter::disabled(),
+                )
+                .await,
+                progress_error: None,
+            }
         }
-    };
-    let outcome = run_with_signal_inner(runner, signal, &cancellation, progress).await;
+        ProgressMode::Verbose => {
+            let (progress, receiver) = ProgressReporter::channel(PROGRESS_CHANNEL_CAPACITY);
+            let renderer = spawn_progress_renderer(receiver, stderr, cancellation.clone());
+            let mut progress_error = None;
+            let renderer = match renderer {
+                Ok(renderer) => Some(renderer),
+                Err(error) => {
+                    progress_error = Some(error);
+                    None
+                }
+            };
+            let outcome = run_with_signal_inner(runner, signal, &cancellation, progress).await;
 
-    if let Some(renderer) = renderer {
-        progress_error = match renderer.join() {
-            Ok(result) => result.err(),
-            Err(_) => Some(AppError::ProgressRendererPanicked),
-        };
-    }
+            if let Some(renderer) = renderer {
+                progress_error = match renderer.join() {
+                    Ok(result) => result.err(),
+                    Err(_) => Some(AppError::ProgressRendererPanicked),
+                };
+            }
 
-    ProgressRunOutcome {
-        outcome,
-        progress_error,
+            ProgressRunOutcome {
+                outcome,
+                progress_error,
+            }
+        }
+        ProgressMode::Compact => {
+            drop(stderr);
+            let (progress, receiver) = ProgressReporter::channel(PROGRESS_CHANNEL_CAPACITY);
+            let draw_target = compact_draw_target.unwrap_or_else(ProgressDrawTarget::stderr);
+            let renderer = spawn_compact_progress_renderer(receiver, draw_target).ok();
+            let outcome = run_with_signal_inner(runner, signal, &cancellation, progress).await;
+            if let Some(renderer) = renderer {
+                let _ = renderer.join();
+            }
+            ProgressRunOutcome {
+                outcome,
+                progress_error: None,
+            }
+        }
     }
 }
 
@@ -164,6 +241,32 @@ where
             Err(AppError::Write(error))
         }
     }
+}
+
+/// Starts the best-effort dynamic renderer used by compact terminal mode.
+pub fn spawn_compact_progress_renderer(
+    receiver: Receiver<ProgressEvent>,
+    draw_target: ProgressDrawTarget,
+) -> Result<JoinHandle<()>, AppError> {
+    std::thread::Builder::new()
+        .name("cfbench-compact-progress".to_owned())
+        .spawn(move || {
+            let spinner = ProgressBar::with_draw_target(None, draw_target);
+            spinner.set_style(
+                ProgressStyle::with_template("{spinner} {wide_msg}")
+                    .expect("constant compact progress template is valid")
+                    .tick_strings(COMPACT_TICKS),
+            );
+            spinner.set_message(OPENING_PROGRESS_LINE);
+            spinner.enable_steady_tick(COMPACT_TICK);
+            for event in receiver {
+                if let Some(message) = render_compact_progress(&event) {
+                    spinner.set_message(message);
+                }
+            }
+            spinner.finish_and_clear();
+        })
+        .map_err(AppError::Write)
 }
 
 async fn run_with_signal_inner<T, S>(
@@ -218,6 +321,9 @@ where
 {
     write_progress_line(&mut writer, OPENING_PROGRESS_LINE)?;
     for event in receiver {
+        if matches!(event, ProgressEvent::RequestStarted { .. }) {
+            continue;
+        }
         write_progress_line(&mut writer, &render_progress(&event))?;
     }
     Ok(())
@@ -256,8 +362,8 @@ impl Drop for CancelOnDrop {
     }
 }
 
-pub fn write_progress(options: OutputOptions, stderr: &mut impl Write) -> Result<(), AppError> {
-    if options.progress_enabled() {
+pub fn write_progress(mode: ProgressMode, stderr: &mut impl Write) -> Result<(), AppError> {
+    if mode == ProgressMode::Verbose {
         write_progress_line(stderr, OPENING_PROGRESS_LINE)?;
     }
     Ok(())

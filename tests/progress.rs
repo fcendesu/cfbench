@@ -1,4 +1,4 @@
-use cfbench::output::render_progress;
+use cfbench::output::{render_compact_progress, render_progress};
 use cfbench::plan::Direction;
 use cfbench::progress::{ProgressEvent, ProgressFailureKind, ProgressReporter, ProgressStage};
 
@@ -15,6 +15,97 @@ fn formats_individual_transfer_progress_without_terminal_control() {
 
     assert_eq!(line, "[download 100 MB 1/3] 676.87 Mbps — 1.19 s");
     assert!(!line.contains(['\r', '\u{1b}']));
+}
+
+#[test]
+fn compact_progress_formats_primary_request_lifecycle() {
+    let cases = [
+        (
+            ProgressEvent::RequestStarted {
+                stage: ProgressStage::Latency,
+                current: Some(2),
+                total: Some(20),
+            },
+            Some("Latency 2/20"),
+        ),
+        (
+            ProgressEvent::LatencyCompleted {
+                current: 2,
+                total: 20,
+                latency_ms: 12.4,
+            },
+            Some("Latency 2/20 - 12.40 ms"),
+        ),
+        (
+            ProgressEvent::RequestStarted {
+                stage: ProgressStage::Transfer {
+                    direction: Direction::Download,
+                    requested_bytes: 100_000_000,
+                },
+                current: Some(2),
+                total: Some(3),
+            },
+            Some("Download 100 MB 2/3"),
+        ),
+        (
+            ProgressEvent::TransferCompleted {
+                direction: Direction::Upload,
+                requested_bytes: 50_000_000,
+                current: 1,
+                total: 3,
+                bps: 216_900_000,
+                adjusted_duration_ms: 1_200.0,
+            },
+            Some("Upload 50 MB 1/3 - 216.90 Mbps"),
+        ),
+    ];
+
+    for (event, expected) in cases {
+        let actual = render_compact_progress(&event);
+        assert_eq!(actual.as_deref(), expected);
+        assert!(!actual.unwrap().contains(['\r', '\u{1b}']));
+    }
+}
+
+#[test]
+fn compact_progress_keeps_loaded_latency_events_out_of_active_display() {
+    let events = [
+        ProgressEvent::LoadedLatencyCompleted {
+            direction: Direction::Download,
+            sequence: 4,
+            latency_ms: 12.4,
+        },
+        ProgressEvent::RequestFailed {
+            stage: ProgressStage::LoadedLatency {
+                direction: Direction::Download,
+            },
+            current: None,
+            total: None,
+            kind: ProgressFailureKind::Timeout,
+        },
+    ];
+
+    for event in events {
+        assert_eq!(render_compact_progress(&event), None);
+    }
+}
+
+#[test]
+fn compact_progress_formats_only_safe_request_failure_categories() {
+    let rendered = render_compact_progress(&ProgressEvent::RequestFailed {
+        stage: ProgressStage::Transfer {
+            direction: Direction::Upload,
+            requested_bytes: 50_000_000,
+        },
+        current: Some(1),
+        total: Some(3),
+        kind: ProgressFailureKind::Timeout,
+    })
+    .expect("request failures retain the safe failure category");
+
+    assert_eq!(rendered, "Upload 50 MB 1/3 - failed: timeout");
+    assert!(!rendered.contains("fixture.invalid"));
+    assert!(!rendered.contains("https://"));
 }
 
 #[test]
