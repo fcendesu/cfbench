@@ -14,6 +14,10 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
   latency/jitter, and direction-local loaded latency; final reductions remain
   authoritative. `--verbose` retains permanent per-request lines and
   automation output remains unchanged.
+- GitHub Releases now provide verified standalone binaries for Linux x86_64,
+  Linux ARM64, macOS Apple Silicon, macOS Intel, and Windows x86_64.
+- The checksum-verifying Linux installer now supports ARM64 using the
+  standalone release archive.
 
 ## [0.3.2] - 2026-08-05
 

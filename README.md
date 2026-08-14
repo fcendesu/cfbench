@@ -4,13 +4,31 @@
 
 `cfbench` is unofficial and is not affiliated with, endorsed by, or supported by Cloudflare.
 
-## Install (Linux x86_64)
+## Install
 
-### Bash installer for `.deb` and `.rpm`
+### Linux installer
+
+The checksum-verifying installer supports Linux x86_64 and Linux ARM64. It uses
+`.deb` or `.rpm` packages where available on x86_64 and the standalone archive
+on ARM64.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/fcendesu/cfbench/main/scripts/install.sh | sh
 ```
+
+### Release binaries
+
+| Platform | Target | Format |
+| --- | --- | --- |
+| Linux x86_64 | `x86_64-unknown-linux-gnu` | `.tar.gz`, `.deb`, `.rpm` |
+| Linux ARM64 | `aarch64-unknown-linux-gnu` | `.tar.gz` |
+| macOS Apple Silicon | `aarch64-apple-darwin` | `.tar.gz` |
+| macOS Intel | `x86_64-apple-darwin` | `.tar.gz` |
+| Windows x86_64 | `x86_64-pc-windows-msvc` | `.zip` |
+
+Every GitHub Release includes one SHA-256 manifest covering all binaries and
+packages. See [installation details](docs/INSTALLATION.md) for verified manual
+installation commands.
 
 ### Build from source
 
