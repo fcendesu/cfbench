@@ -1,5 +1,5 @@
 #!/usr/bin/env sh
-# Install a verified cfbench Linux x86_64 release artifact.
+# Install a verified cfbench Linux release artifact.
 set -eu
 
 repository=${CFBENCH_REPOSITORY:-fcendesu/cfbench}
@@ -16,7 +16,19 @@ command -v curl >/dev/null 2>&1 || fail "curl is required"
 command -v sha256sum >/dev/null 2>&1 || command -v shasum >/dev/null 2>&1 || fail "sha256sum or shasum is required"
 
 [ "$(uname -s)" = "Linux" ] || fail "only Linux is supported by this installer; use cargo install --path . on other platforms"
-[ "$(uname -m)" = "x86_64" ] || fail "only Linux x86_64 release artifacts are currently published"
+
+machine=$(uname -m)
+case "$machine" in
+    x86_64|amd64)
+        target=x86_64-unknown-linux-gnu
+        native_packages=true
+        ;;
+    aarch64|arm64)
+        target=aarch64-unknown-linux-gnu
+        native_packages=false
+        ;;
+    *) fail "unsupported Linux architecture: $machine" ;;
+esac
 
 if [ "$version" = "latest" ]; then
     version=$(curl -fsSL "https://api.github.com/repos/$repository/releases/latest" \
@@ -31,7 +43,7 @@ case "$version" in
 esac
 
 package_type=standalone
-if [ -r "$os_release" ]; then
+if [ "$native_packages" = true ] && [ -r "$os_release" ]; then
     # shellcheck disable=SC1090
     . "$os_release"
     distribution_ids="${ID:-} ${ID_LIKE:-}"
@@ -45,7 +57,7 @@ release_version=${version#v}
 case "$package_type" in
     deb) artifact="cfbench_${release_version}-1_amd64.deb" ;;
     rpm) artifact="cfbench-${release_version}-1.x86_64.rpm" ;;
-    *) artifact="cfbench-${version}-x86_64-unknown-linux-gnu.tar.gz" ;;
+    *) artifact="cfbench-${version}-${target}.tar.gz" ;;
 esac
 checksum_file="cfbench-${version}-SHA256SUMS.txt"
 base_url="https://github.com/$repository/releases/download/$version"

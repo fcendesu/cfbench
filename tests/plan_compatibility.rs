@@ -33,6 +33,29 @@ fn installation_document_uses_the_current_release_version() {
 }
 
 #[test]
+fn installation_docs_cover_all_published_targets() {
+    let readme = std::fs::read_to_string("README.md").unwrap();
+    let installation = std::fs::read_to_string("docs/INSTALLATION.md").unwrap();
+
+    for target in [
+        "x86_64-unknown-linux-gnu",
+        "aarch64-unknown-linux-gnu",
+        "aarch64-apple-darwin",
+        "x86_64-apple-darwin",
+        "x86_64-pc-windows-msvc",
+    ] {
+        assert!(readme.contains(target), "README is missing {target}");
+        assert!(
+            installation.contains(target),
+            "installation guide is missing {target}"
+        );
+    }
+    assert!(readme.contains("Linux ARM64"));
+    assert!(installation.contains(".zip"));
+    assert!(installation.contains("ARM64 `.deb` or `.rpm` packages are not published"));
+}
+
+#[test]
 fn compatibility_document_names_exact_and_native_rules_separately() {
     let document = std::fs::read_to_string("docs/COMPATIBILITY.md").unwrap();
 
