@@ -20,6 +20,9 @@ Pin a version:
 curl -fsSL https://raw.githubusercontent.com/fcendesu/cfbench/main/scripts/install.sh | CFBENCH_VERSION=0.3.2 sh
 ```
 
+The v0.3.2 pin is a Linux x86_64 example. Linux ARM64 artifacts begin with the
+first cross-platform release after v0.3.2.
+
 For Linux ARM64 or any distribution using the standalone fallback, install to
 a writable custom directory:
 
@@ -40,8 +43,11 @@ installs also require `tar`. ARM64 `.deb` or `.rpm` packages are not published.
 | macOS Intel | `x86_64-apple-darwin` | `.tar.gz` |
 | Windows x86_64 | `x86_64-pc-windows-msvc` | `.zip` |
 
-Each release publishes `cfbench-v0.3.2-SHA256SUMS.txt`, containing one SHA-256
-digest for every binary archive and Linux x86_64 package.
+Releases produced by the current workflow publish
+`cfbench-<tag>-SHA256SUMS.txt`, containing one SHA-256 digest for every binary
+archive and Linux x86_64 package. Releases through v0.3.2 contain only the Linux
+x86_64 artifacts; the five-platform artifact set begins with the next tagged
+release.
 
 ## Debian and RPM packages (Linux x86_64)
 
@@ -67,7 +73,7 @@ Choose the target from the table above. The example below uses Linux ARM64;
 replace the target in both commands for another Unix platform.
 
 ```bash
-tag=v0.3.2
+tag=vX.Y.Z # Select a release that lists the target archive.
 target=aarch64-unknown-linux-gnu
 curl -LO "https://github.com/fcendesu/cfbench/releases/download/$tag/cfbench-$tag-$target.tar.gz"
 curl -LO "https://github.com/fcendesu/cfbench/releases/download/$tag/cfbench-$tag-SHA256SUMS.txt"
@@ -85,8 +91,8 @@ are not code-signed or notarized.
 Download these two files from the same GitHub Release:
 
 ```text
-cfbench-v0.3.2-x86_64-pc-windows-msvc.zip
-cfbench-v0.3.2-SHA256SUMS.txt
+cfbench-<tag>-x86_64-pc-windows-msvc.zip
+cfbench-<tag>-SHA256SUMS.txt
 ```
 
 Confirm that `Get-FileHash -Algorithm SHA256` reports the digest listed for the

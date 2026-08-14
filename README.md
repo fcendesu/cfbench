@@ -26,9 +26,11 @@ curl -fsSL https://raw.githubusercontent.com/fcendesu/cfbench/main/scripts/insta
 | macOS Intel | `x86_64-apple-darwin` | `.tar.gz` |
 | Windows x86_64 | `x86_64-pc-windows-msvc` | `.zip` |
 
-Every GitHub Release includes one SHA-256 manifest covering all binaries and
-packages. See [installation details](docs/INSTALLATION.md) for verified manual
-installation commands.
+Releases produced by the current workflow include one SHA-256 manifest covering
+all binaries and packages. Releases through v0.3.2 contain only Linux x86_64
+artifacts; the cross-platform set begins with the next tagged release. See
+[installation details](docs/INSTALLATION.md) for verified manual installation
+commands.
 
 ### Build from source
 
