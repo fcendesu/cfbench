@@ -165,7 +165,7 @@ fn version_exactly_identifies_cfbench_and_the_compatibility_baseline() {
         .assert()
         .success()
         .stdout(predicate::eq(concat!(
-            "cfbench 0.3.2 (Cloudflare Speedtest v1.13.0, ",
+            "cfbench 0.4.0 (Cloudflare Speedtest v1.13.0, ",
             "5954dee4cc83548a9e5031140df4548f71cd1458)\n"
         )));
 }
