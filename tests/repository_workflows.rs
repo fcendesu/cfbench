@@ -10,18 +10,29 @@ fn normalize_line_endings(contents: String) -> String {
 }
 
 #[test]
-fn ci_filters_pushes_and_pull_requests_to_main() {
+fn ci_uses_the_five_native_release_targets() {
     let workflow = workflow(".github/workflows/ci.yml");
 
     assert!(workflow.contains(
         "on:\n  push:\n    branches:\n      - main\n  pull_request:\n    branches:\n      - main"
     ));
-    for runner in ["ubuntu-latest", "macos-latest", "windows-latest"] {
+    let required = [
+        ("linux-x86_64", "ubuntu-22.04"),
+        ("linux-aarch64", "ubuntu-24.04-arm"),
+        ("macos-aarch64", "macos-15"),
+        ("macos-x86_64", "macos-15-intel"),
+        ("windows-x86_64", "windows-2025"),
+    ];
+    for (name, runner) in required {
+        assert!(workflow.contains(name), "missing required job {name}");
         assert!(
             workflow.contains(runner),
             "missing required runner {runner}"
         );
     }
+    assert!(!workflow.contains("gh release create"));
+    assert!(!workflow.contains("contents: write"));
+    assert!(!workflow.contains("tags:"));
 }
 
 #[test]
