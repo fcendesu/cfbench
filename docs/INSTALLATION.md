@@ -17,11 +17,10 @@ curl -fsSL https://raw.githubusercontent.com/fcendesu/cfbench/main/scripts/insta
 Pin a version:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/fcendesu/cfbench/main/scripts/install.sh | CFBENCH_VERSION=0.3.2 sh
+curl -fsSL https://raw.githubusercontent.com/fcendesu/cfbench/main/scripts/install.sh | CFBENCH_VERSION=0.4.0 sh
 ```
 
-The v0.3.2 pin is a Linux x86_64 example. Linux ARM64 artifacts begin with the
-first cross-platform release after v0.3.2.
+Linux ARM64 artifacts are available starting with v0.4.0.
 
 For Linux ARM64 or any distribution using the standalone fallback, install to
 a writable custom directory:
@@ -46,8 +45,7 @@ installs also require `tar`. ARM64 `.deb` or `.rpm` packages are not published.
 Releases produced by the current workflow publish
 `cfbench-<tag>-SHA256SUMS.txt`, containing one SHA-256 digest for every binary
 archive and Linux x86_64 package. Releases through v0.3.2 contain only the Linux
-x86_64 artifacts; the five-platform artifact set begins with the next tagged
-release.
+x86_64 artifacts; the five-platform artifact set begins with v0.4.0.
 
 ## Debian and RPM packages (Linux x86_64)
 
@@ -56,15 +54,15 @@ Each GitHub Release supplies a `.deb`, `.rpm`, and `cfbench-<version>-SHA256SUMS
 Debian/Ubuntu example:
 
 ```bash
-sha256sum -c cfbench-v0.3.2-SHA256SUMS.txt --ignore-missing
-sudo apt install ./cfbench_0.3.2-1_amd64.deb
+sha256sum -c cfbench-v0.4.0-SHA256SUMS.txt --ignore-missing
+sudo apt install ./cfbench_0.4.0-1_amd64.deb
 ```
 
 Fedora/RHEL example:
 
 ```bash
-sha256sum -c cfbench-v0.3.2-SHA256SUMS.txt --ignore-missing
-sudo dnf install ./cfbench-0.3.2-1.x86_64.rpm
+sha256sum -c cfbench-v0.4.0-SHA256SUMS.txt --ignore-missing
+sudo dnf install ./cfbench-0.4.0-1.x86_64.rpm
 ```
 
 ## Manual Linux and macOS archive installation
@@ -102,6 +100,14 @@ ZIP in the manifest, extract `cfbench.exe`, and place it in a directory on
 ## Source install
 
 Rust 1.95 or newer is required.
+
+Install the crates.io release:
+
+```bash
+cargo install cfbench
+```
+
+Or build directly from the repository:
 
 ```bash
 git clone https://github.com/fcendesu/cfbench.git

@@ -28,9 +28,17 @@ curl -fsSL https://raw.githubusercontent.com/fcendesu/cfbench/main/scripts/insta
 
 Releases produced by the current workflow include one SHA-256 manifest covering
 all binaries and packages. Releases through v0.3.2 contain only Linux x86_64
-artifacts; the cross-platform set begins with the next tagged release. See
+artifacts; the cross-platform set begins with v0.4.0. See
 [installation details](docs/INSTALLATION.md) for verified manual installation
 commands.
+
+### Cargo
+
+Rust 1.95 or newer is required:
+
+```bash
+cargo install cfbench
+```
 
 ### Build from source
 
@@ -96,7 +104,7 @@ Testing against Cloudflare edge...
 [download 100 KB 1/1] 71.25 Mbps — 11.2 ms
 ...
 
-cfbench 0.3.2
+cfbench 0.4.0
 Target: Cloudflare edge
 Protocol: IPv6 / HTTP/1.1
 Measured at: 2026-07-26T12:00:00.000Z

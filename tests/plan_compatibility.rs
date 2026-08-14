@@ -25,11 +25,11 @@ fn compatibility_document_explains_the_informational_rpki_check() {
 #[test]
 fn installation_document_uses_the_current_release_version() {
     let document = std::fs::read_to_string("docs/INSTALLATION.md").unwrap();
-    assert!(!document.contains("0.3.1"));
-    assert!(document.contains("CFBENCH_VERSION=0.3.2"));
-    assert!(document.contains("cfbench-v0.3.2-SHA256SUMS.txt"));
-    assert!(document.contains("cfbench_0.3.2-1_amd64.deb"));
-    assert!(document.contains("cfbench-0.3.2-1.x86_64.rpm"));
+    assert!(!document.contains("0.3.2-1"));
+    assert!(document.contains("CFBENCH_VERSION=0.4.0"));
+    assert!(document.contains("cfbench-v0.4.0-SHA256SUMS.txt"));
+    assert!(document.contains("cfbench_0.4.0-1_amd64.deb"));
+    assert!(document.contains("cfbench-0.4.0-1.x86_64.rpm"));
 }
 
 #[test]

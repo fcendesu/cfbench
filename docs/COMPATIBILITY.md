@@ -1,6 +1,6 @@
 # Cloudflare Speedtest compatibility
 
-cfbench 0.3.2 is based on [Cloudflare Speedtest v1.13.0](https://github.com/cloudflare/speedtest/releases/tag/v1.13.0), commit [`5954dee4cc83548a9e5031140df4548f71cd1458`](https://github.com/cloudflare/speedtest/commit/5954dee4cc83548a9e5031140df4548f71cd1458).
+cfbench 0.4.0 is based on [Cloudflare Speedtest v1.13.0](https://github.com/cloudflare/speedtest/releases/tag/v1.13.0), commit [`5954dee4cc83548a9e5031140df4548f71cd1458`](https://github.com/cloudflare/speedtest/commit/5954dee4cc83548a9e5031140df4548f71cd1458).
 
 Cloudflare Speedtest v1.13.0 leaves the v1.12.1 measurement methodology unchanged. cfbench matches the public default order of latency, download, upload, and loaded-latency work, including the two-request latency phases interleaved between transfer groups. The default run accumulates all 42 successful idle-latency probes in measurement order. It uses the upstream median latency, 90th-percentile bandwidth, 10 ms bandwidth-eligibility, 250 ms loaded-latency, 400 ms probe-throttle, latest-20 loaded points, and strict greater-than-1000 ms adaptive-stop rules.
 

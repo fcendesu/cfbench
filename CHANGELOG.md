@@ -7,6 +7,8 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-08-15
+
 ### Added
 
 - Interactive terminal runs now show compact, single-line live telemetry for
@@ -122,7 +124,8 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 - The installer validates the selected release artifact against its published SHA-256 checksum before installation.
 
-[Unreleased]: https://github.com/fcendesu/cfbench/compare/v0.3.2...HEAD
+[Unreleased]: https://github.com/fcendesu/cfbench/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/fcendesu/cfbench/compare/v0.3.2...v0.4.0
 [0.3.2]: https://github.com/fcendesu/cfbench/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/fcendesu/cfbench/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/fcendesu/cfbench/compare/v0.2.0...v0.3.0
