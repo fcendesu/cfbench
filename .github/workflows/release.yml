@@ -108,6 +108,8 @@ jobs:
           toolchain: 1.95.0
       - name: Cache Rust build artifacts
         uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.name }}
       - name: Verify native Rust host
         shell: bash
         run: |

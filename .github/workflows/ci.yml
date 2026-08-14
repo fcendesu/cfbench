@@ -50,6 +50,8 @@ jobs:
           components: rustfmt, clippy
       - name: Cache Rust build artifacts
         uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.name }}
       - name: Check formatting
         if: matrix.primary
         run: cargo fmt --check

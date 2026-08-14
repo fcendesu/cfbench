@@ -62,6 +62,7 @@ fn ci_uses_the_five_native_release_targets() {
         values(matrix, "primary: "),
         ["true", "false", "false", "false", "false"]
     );
+    assert_eq!(workflow.matches("key: ${{ matrix.name }}").count(), 1);
     assert!(!workflow.contains("gh release create"));
     assert!(!workflow.contains("contents: write"));
     assert!(!workflow.contains("tags:"));
@@ -114,6 +115,7 @@ fn release_builds_and_publishes_the_complete_native_matrix() {
         ]
     );
     assert_eq!(workflow.matches("x86_64-unknown-linux-gnu").count(), 1);
+    assert_eq!(workflow.matches("key: ${{ matrix.name }}").count(), 1);
     assert!(workflow.contains("actions/upload-artifact@v4"));
     assert!(workflow.contains("actions/download-artifact@v4"));
     assert!(workflow.contains("scripts/assemble-release.sh"));
