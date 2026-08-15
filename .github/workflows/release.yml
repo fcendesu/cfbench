@@ -69,7 +69,8 @@ jobs:
           mkdir dist
           cp target/debian/*.deb dist/
           cp target/generate-rpm/*.rpm dist/
-          tar -C target/release -czf "dist/cfbench-$tag-x86_64-unknown-linux-gnu.tar.gz" cfbench
+          sh scripts/package-standalone.sh \
+            target/release/cfbench "$tag" x86_64-unknown-linux-gnu dist
       - name: Upload Linux x86_64 artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -128,7 +129,8 @@ jobs:
             *) printf 'unexpected version output: %s\n' "$reported" >&2; exit 1 ;;
           esac
           mkdir dist
-          tar -C target/release -czf "dist/cfbench-$GITHUB_REF_NAME-${{ matrix.target }}.tar.gz" cfbench
+          sh scripts/package-standalone.sh \
+            target/release/cfbench "$GITHUB_REF_NAME" "${{ matrix.target }}" dist
       - name: Verify and archive Windows binary
         if: runner.os == 'Windows'
         shell: pwsh
@@ -138,8 +140,12 @@ jobs:
           if (-not $reported.StartsWith("cfbench $version ")) {
             throw "unexpected version output: $reported"
           }
-          New-Item -ItemType Directory -Path dist | Out-Null
-          Compress-Archive -Path target/release/cfbench.exe -DestinationPath "dist/cfbench-$env:GITHUB_REF_NAME-${{ matrix.target }}.zip"
+          $stage = Join-Path $env:RUNNER_TEMP "cfbench-standalone"
+          New-Item -ItemType Directory -Path dist, $stage | Out-Null
+          Copy-Item target/release/cfbench.exe -Destination $stage
+          Copy-Item assets/completions -Destination $stage -Recurse
+          Copy-Item assets/man -Destination $stage -Recurse
+          Compress-Archive -Path "$stage/*" -DestinationPath "dist/cfbench-$env:GITHUB_REF_NAME-${{ matrix.target }}.zip"
       - name: Upload standalone artifact
         uses: actions/upload-artifact@v4
         with:

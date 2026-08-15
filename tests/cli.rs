@@ -181,3 +181,55 @@ fn help_and_version_never_emit_runtime_progress() {
             .stderr(predicate::str::is_empty());
     }
 }
+
+#[test]
+fn completion_commands_generate_shell_native_scripts_without_runtime_output() {
+    let cases = [
+        ("bash", "complete"),
+        ("zsh", "#compdef cfbench"),
+        ("fish", "complete -c cfbench"),
+        ("powershell", "Register-ArgumentCompleter"),
+    ];
+
+    for (shell, marker) in cases {
+        Command::cargo_bin("cfbench")
+            .unwrap()
+            .args(["completions", shell])
+            .assert()
+            .success()
+            .stdout(predicate::str::contains(marker))
+            .stderr(predicate::str::is_empty());
+    }
+}
+
+#[test]
+fn man_command_generates_a_section_one_manual_without_runtime_output() {
+    Command::cargo_bin("cfbench")
+        .unwrap()
+        .arg("man")
+        .assert()
+        .success()
+        .stdout(
+            predicate::str::contains(".TH cfbench 1")
+                .and(predicate::str::contains(r"\-\-ipv4"))
+                .and(predicate::str::contains("completions")),
+        )
+        .stderr(predicate::str::is_empty());
+}
+
+#[test]
+fn utility_commands_reject_measurement_options_before_runtime() {
+    for arguments in [
+        ["--ipv4", "completions", "bash"],
+        ["--timeout", "60", "man"],
+    ] {
+        Command::cargo_bin("cfbench")
+            .unwrap()
+            .args(arguments)
+            .assert()
+            .failure()
+            .code(2)
+            .stdout(predicate::str::is_empty())
+            .stderr(predicate::str::contains("cannot be used with"));
+    }
+}

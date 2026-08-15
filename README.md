@@ -67,6 +67,35 @@ cfbench --quiet --timeout 60
 
 Run `cfbench --help` for the complete option list. Progress and diagnostics use stderr.
 
+### Shell completions and manual
+
+Generate completions directly from cfbench's Clap command definition:
+
+```bash
+cfbench completions bash
+cfbench completions zsh
+cfbench completions fish
+cfbench completions powershell
+```
+
+Debian and RPM packages install Bash, Zsh, and Fish completions plus the
+`cfbench(1)` manual automatically. Standalone archives include the same files
+under `completions/` and `man/`. To inspect the manual without installing it:
+
+```bash
+cfbench man > cfbench.1
+man ./cfbench.1
+```
+
+PowerShell users can enable completion for the current session with:
+
+```powershell
+cfbench completions powershell | Out-String | Invoke-Expression
+```
+
+See [installation details](docs/INSTALLATION.md) for per-shell installation
+paths.
+
 On an interactive terminal, ordinary text mode shows one transient, single-line compact progress indicator and clears it before the final summary. During a transfer it can look like:
 
 ```text

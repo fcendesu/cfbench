@@ -7,6 +7,13 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+### Added
+
+- Added offline `completions` generation for Bash, Zsh, Fish, and PowerShell,
+  plus a generated `cfbench(1)` manual page.
+- Debian, RPM, and standalone release artifacts now include generated shell
+  completion and manual assets kept synchronized with the Clap command.
+
 ## [0.4.0] - 2026-08-15
 
 ### Added

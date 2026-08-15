@@ -1,4 +1,4 @@
-use clap::Parser;
+use clap::{Parser, Subcommand, ValueEnum};
 
 use crate::compatibility::VERSION_BANNER;
 
@@ -7,8 +7,16 @@ use crate::compatibility::VERSION_BANNER;
 /// Because native HTTP timing differs from browser timing, results are not
 /// expected to be numerically identical to speed.cloudflare.com.
 #[derive(Clone, Debug, Parser)]
-#[command(version = VERSION_BANNER, about, long_about)]
+#[command(
+    version = VERSION_BANNER,
+    about,
+    long_about,
+    args_conflicts_with_subcommands = true
+)]
 pub struct Cli {
+    #[command(subcommand)]
+    pub command: Option<CliCommand>,
+
     /// Use IPv4 only
     #[arg(long, conflicts_with = "ipv6")]
     pub ipv4: bool,
@@ -60,4 +68,24 @@ pub struct Cli {
     /// Perform an informational reachability probe to Cloudflare's RPKI-invalid route
     #[arg(long)]
     pub rpki_check: bool,
+}
+
+#[derive(Clone, Debug, Subcommand)]
+pub enum CliCommand {
+    /// Generate a shell completion script
+    Completions {
+        /// Shell to generate completions for
+        #[arg(value_enum)]
+        shell: CompletionShell,
+    },
+    /// Generate the cfbench(1) manual page
+    Man,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+pub enum CompletionShell {
+    Bash,
+    Zsh,
+    Fish,
+    Powershell,
 }

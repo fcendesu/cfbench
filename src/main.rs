@@ -5,6 +5,7 @@ use cfbench::app::{
     AppError, OutputOptions, run_with_signal_and_progress, write_outcome, write_progress,
 };
 use cfbench::cli::Cli;
+use cfbench::cli_docs;
 use cfbench::clock::RunClock;
 use cfbench::config::RunConfig;
 use cfbench::error::TransportError;
@@ -17,6 +18,9 @@ use clap::{CommandFactory, Parser, error::ErrorKind};
 #[tokio::main]
 async fn main() -> ExitCode {
     let cli = Cli::parse();
+    if let Some(command) = &cli.command {
+        return write_cli_document(command);
+    }
     let config = match RunConfig::try_from(cli.clone()) {
         Ok(config) => config,
         Err(error) => Cli::command()
@@ -25,6 +29,22 @@ async fn main() -> ExitCode {
     };
 
     run(cli, config).await
+}
+
+fn write_cli_document(command: &cfbench::cli::CliCommand) -> ExitCode {
+    let mut stdout = io::stdout().lock();
+    match cli_docs::write_command(command, &mut stdout).and_then(|()| stdout.flush()) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(error) => {
+            let mut stderr = io::stderr().lock();
+            let _ = writeln!(
+                stderr,
+                "error: failed to generate command-line documentation: {error}"
+            );
+            let _ = stderr.flush();
+            ExitCode::FAILURE
+        }
+    }
 }
 
 async fn run(cli: Cli, config: RunConfig) -> ExitCode {

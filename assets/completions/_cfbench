@@ -1,0 +1,137 @@
+#compdef cfbench
+
+autoload -U is-at-least
+
+_cfbench() {
+    typeset -A opt_args
+    typeset -a _arguments_options
+    local ret=1
+
+    if is-at-least 5.2; then
+        _arguments_options=(-s -S -C)
+    else
+        _arguments_options=(-s -C)
+    fi
+
+    local context curcontext="$curcontext" state line
+    _arguments "${_arguments_options[@]}" : \
+'--timeout=[Per-request timeout]:SECONDS:_default' \
+'(--ipv6)--ipv4[Use IPv4 only]' \
+'(--ipv4)--ipv6[Use IPv6 only]' \
+'--json[Emit versioned JSON to stdout]' \
+'--no-download[Skip download measurements]' \
+'--no-upload[Skip upload measurements]' \
+'--no-loaded-latency[Disable latency probes during transfers]' \
+'--no-metadata[Skip the default public IP and network metadata request]' \
+'(--json --verbose)-q[Suppress normal output; report status with the exit code]' \
+'(--json --verbose)--quiet[Suppress normal output; report status with the exit code]' \
+'--verbose[Show per-request measurement progress]' \
+'--rpki-check[Perform an informational reachability probe to Cloudflare'\''s RPKI-invalid route]' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+'-V[Print version]' \
+'--version[Print version]' \
+":: :_cfbench_commands" \
+"*::: :->cfbench" \
+&& ret=0
+    case $state in
+    (cfbench)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:cfbench-command-$line[1]:"
+        case $line[1] in
+            (completions)
+_arguments "${_arguments_options[@]}" : \
+'-h[Print help]' \
+'--help[Print help]' \
+':shell -- Shell to generate completions for:(bash zsh fish powershell)' \
+&& ret=0
+;;
+(man)
+_arguments "${_arguments_options[@]}" : \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+":: :_cfbench__subcmd__help_commands" \
+"*::: :->help" \
+&& ret=0
+
+    case $state in
+    (help)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:cfbench-help-command-$line[1]:"
+        case $line[1] in
+            (completions)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(man)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
+        esac
+    ;;
+esac
+}
+
+(( $+functions[_cfbench_commands] )) ||
+_cfbench_commands() {
+    local commands; commands=(
+'completions:Generate a shell completion script' \
+'man:Generate the cfbench(1) manual page' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'cfbench commands' commands "$@"
+}
+(( $+functions[_cfbench__subcmd__completions_commands] )) ||
+_cfbench__subcmd__completions_commands() {
+    local commands; commands=()
+    _describe -t commands 'cfbench completions commands' commands "$@"
+}
+(( $+functions[_cfbench__subcmd__help_commands] )) ||
+_cfbench__subcmd__help_commands() {
+    local commands; commands=(
+'completions:Generate a shell completion script' \
+'man:Generate the cfbench(1) manual page' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'cfbench help commands' commands "$@"
+}
+(( $+functions[_cfbench__subcmd__help__subcmd__completions_commands] )) ||
+_cfbench__subcmd__help__subcmd__completions_commands() {
+    local commands; commands=()
+    _describe -t commands 'cfbench help completions commands' commands "$@"
+}
+(( $+functions[_cfbench__subcmd__help__subcmd__help_commands] )) ||
+_cfbench__subcmd__help__subcmd__help_commands() {
+    local commands; commands=()
+    _describe -t commands 'cfbench help help commands' commands "$@"
+}
+(( $+functions[_cfbench__subcmd__help__subcmd__man_commands] )) ||
+_cfbench__subcmd__help__subcmd__man_commands() {
+    local commands; commands=()
+    _describe -t commands 'cfbench help man commands' commands "$@"
+}
+(( $+functions[_cfbench__subcmd__man_commands] )) ||
+_cfbench__subcmd__man_commands() {
+    local commands; commands=()
+    _describe -t commands 'cfbench man commands' commands "$@"
+}
+
+if [ "$funcstack[1]" = "_cfbench" ]; then
+    _cfbench "$@"
+else
+    compdef _cfbench cfbench
+fi
