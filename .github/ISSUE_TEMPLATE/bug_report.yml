@@ -1,0 +1,72 @@
+name: Bug report
+description: Report a reproducible problem with cfbench
+title: "bug: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping improve cfbench. Please provide enough detail to reproduce the problem.
+  - type: input
+    id: cfbench_version
+    attributes:
+      label: cfbench version
+      description: Run `cfbench --version` and paste the first version number.
+      placeholder: 0.4.0
+    validations:
+      required: true
+  - type: input
+    id: operating_system
+    attributes:
+      label: Operating system
+      placeholder: Debian 13, Fedora 43, macOS 15, or Windows 11
+    validations:
+      required: true
+  - type: input
+    id: architecture
+    attributes:
+      label: Architecture
+      placeholder: x86_64 or aarch64
+    validations:
+      required: true
+  - type: input
+    id: flags
+    attributes:
+      label: Relevant flags
+      description: Include every flag used. Enter `none` for a default run.
+      placeholder: --ipv4 --verbose
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction steps
+      description: List the shortest sequence that reliably demonstrates the problem.
+    validations:
+      required: true
+  - type: textarea
+    id: expected_behavior
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: markdown
+    attributes:
+      value: |
+        ### Protect your network privacy
+
+        Before pasting output, remove public IP addresses, ISP or network names, ASN values, edge locations, and copied live metadata. Synthetic or redacted values are sufficient.
+  - type: textarea
+    id: actual_behavior
+    attributes:
+      label: Actual behavior and sanitized output
+      description: Paste only the smallest relevant, sanitized excerpt. Do not include secrets or private network metadata.
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    id: additional_context
+    attributes:
+      label: Additional context
+      description: Add anything else that may help diagnose the problem.

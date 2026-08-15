@@ -1,0 +1,49 @@
+name: Feature request
+description: Propose a focused improvement to cfbench
+title: "feat: "
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for proposing an improvement. cfbench remains a lightweight, native, line-oriented Cloudflare speed-test CLI.
+  - type: markdown
+    attributes:
+      value: |
+        ### Protect your network privacy
+
+        If examples are needed, remove public IP addresses, ISP or network names, ASN values, edge locations, and copied live metadata. Use synthetic values instead.
+  - type: textarea
+    id: use_case
+    attributes:
+      label: Use case
+      description: What problem would this solve, and who encounters it?
+    validations:
+      required: true
+  - type: textarea
+    id: proposed_behavior
+    attributes:
+      label: Proposed behavior
+      description: Describe the command-line behavior and expected output.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: What existing options or workarounds did you consider?
+    validations:
+      required: true
+  - type: textarea
+    id: compatibility_impact
+    attributes:
+      label: Compatibility impact
+      description: Note any effect on Cloudflare methodology compatibility, JSON stability, scripts, packaging, or supported platforms.
+    validations:
+      required: true
+  - type: textarea
+    id: additional_context
+    attributes:
+      label: Additional context
+      description: Add sanitized examples or links that clarify the proposal.
