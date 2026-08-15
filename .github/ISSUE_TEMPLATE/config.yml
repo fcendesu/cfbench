@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/fcendesu/cfbench/blob/main/SECURITY.md
+    about: Follow SECURITY.md to report vulnerabilities privately; do not publicize security details in an issue.
