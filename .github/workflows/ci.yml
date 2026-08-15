@@ -42,6 +42,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sh tests/install_script.sh
+          sh tests/package_standalone.sh
           sh tests/release_artifacts.sh
       - name: Install Rust
         uses: dtolnay/rust-toolchain@master

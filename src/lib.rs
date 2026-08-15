@@ -3,6 +3,7 @@
 pub mod app;
 pub mod cancellation;
 pub mod cli;
+pub mod cli_docs;
 pub mod clock;
 pub mod compatibility;
 pub mod config;

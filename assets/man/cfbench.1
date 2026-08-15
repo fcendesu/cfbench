@@ -1,0 +1,65 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH cfbench 1  "cfbench 0.4.0 (Cloudflare Speedtest v1.13.0, 5954dee4cc83548a9e5031140df4548f71cd1458)" 
+.SH NAME
+cfbench \- An unofficial native Cloudflare\-compatible speed test CLI
+.SH SYNOPSIS
+\fBcfbench\fR [\fB\-\-ipv4\fR] [\fB\-\-ipv6\fR] [\fB\-\-json\fR] [\fB\-\-no\-download\fR] [\fB\-\-no\-upload\fR] [\fB\-\-no\-loaded\-latency\fR] [\fB\-\-no\-metadata\fR] [\fB\-\-timeout\fR] [\fB\-q\fR|\fB\-\-quiet\fR] [\fB\-\-verbose\fR] [\fB\-\-rpki\-check\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fB\-V\fR|\fB\-\-version\fR] [\fIsubcommands\fR]
+.SH DESCRIPTION
+An unofficial native speed test using Cloudflare\-compatible methodology.
+.PP
+Because native HTTP timing differs from browser timing, results are not expected to be numerically identical to speed.cloudflare.com.
+.SH OPTIONS
+.TP
+\fB\-\-ipv4\fR
+Use IPv4 only
+.TP
+\fB\-\-ipv6\fR
+Use IPv6 only
+.TP
+\fB\-\-json\fR
+Emit versioned JSON to stdout
+.TP
+\fB\-\-no\-download\fR
+Skip download measurements
+.TP
+\fB\-\-no\-upload\fR
+Skip upload measurements
+.TP
+\fB\-\-no\-loaded\-latency\fR
+Disable latency probes during transfers
+.TP
+\fB\-\-no\-metadata\fR
+Skip the default public IP and network metadata request.
+
+Metadata collection is enabled by default and includes the public IP, ASN, and approximate location already visible to Cloudflare. \-\-no\-metadata skips the request entirely and omits those metadata fields from output.
+.TP
+\fB\-\-timeout\fR \fI<SECONDS>\fR [default: 30]
+Per\-request timeout
+.TP
+\fB\-q\fR, \fB\-\-quiet\fR
+Suppress normal output; report status with the exit code
+.TP
+\fB\-\-verbose\fR
+Show per\-request measurement progress
+.TP
+\fB\-\-rpki\-check\fR
+Perform an informational reachability probe to Cloudflare\*(Aqs RPKI\-invalid route
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help (see a summary with \*(Aq\-h\*(Aq)
+.TP
+\fB\-V\fR, \fB\-\-version\fR
+Print version
+.SH SUBCOMMANDS
+.TP
+cfbench\-completions(1)
+Generate a shell completion script
+.TP
+cfbench\-man(1)
+Generate the cfbench(1) manual page
+.TP
+cfbench\-help(1)
+Print this message or the help of the given subcommand(s)
+.SH VERSION
+v0.4.0 (Cloudflare Speedtest v1.13.0, 5954dee4cc83548a9e5031140df4548f71cd1458)

@@ -97,6 +97,49 @@ Confirm that `Get-FileHash -Algorithm SHA256` reports the digest listed for the
 ZIP in the manifest, extract `cfbench.exe`, and place it in a directory on
 `PATH`. The Windows binary is not code-signed.
 
+## Shell completions and manual page
+
+Debian and RPM packages install Bash, Zsh, and Fish completions and the
+`cfbench(1)` manual in the conventional system directories. Standalone archives
+contain `completions/` and `man/` alongside the binary; copy the desired files
+to a user-level directory or generate fresh copies from the installed binary.
+
+Bash:
+
+```bash
+mkdir -p "$HOME/.local/share/bash-completion/completions"
+cfbench completions bash > "$HOME/.local/share/bash-completion/completions/cfbench"
+```
+
+Zsh:
+
+```zsh
+mkdir -p "$HOME/.zfunc"
+cfbench completions zsh > "$HOME/.zfunc/_cfbench"
+fpath=("$HOME/.zfunc" $fpath)
+autoload -Uz compinit && compinit
+```
+
+Fish:
+
+```fish
+mkdir -p ~/.config/fish/completions
+cfbench completions fish > ~/.config/fish/completions/cfbench.fish
+```
+
+PowerShell, current session:
+
+```powershell
+cfbench completions powershell | Out-String | Invoke-Expression
+```
+
+Generate and view the manual without installing it system-wide:
+
+```bash
+cfbench man > cfbench.1
+man ./cfbench.1
+```
+
 ## Source install
 
 Rust 1.95 or newer is required.

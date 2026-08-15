@@ -137,3 +137,33 @@ fn workflow_contracts_normalize_windows_line_endings() {
         "on:\n  push:\n"
     );
 }
+
+#[test]
+fn linux_packages_install_generated_cli_assets_in_conventional_directories() {
+    let manifest = workflow("Cargo.toml");
+
+    for asset in [
+        r#"["assets/completions/cfbench.bash", "usr/share/bash-completion/completions/cfbench", "644"]"#,
+        r#"["assets/completions/_cfbench", "usr/share/zsh/vendor-completions/_cfbench", "644"]"#,
+        r#"["assets/completions/cfbench.fish", "usr/share/fish/vendor_completions.d/cfbench.fish", "644"]"#,
+        r#"["assets/man/cfbench.1", "usr/share/man/man1/cfbench.1", "644"]"#,
+        r#"source = "assets/completions/cfbench.bash", dest = "/usr/share/bash-completion/completions/cfbench""#,
+        r#"source = "assets/completions/_cfbench", dest = "/usr/share/zsh/site-functions/_cfbench""#,
+        r#"source = "assets/completions/cfbench.fish", dest = "/usr/share/fish/vendor_completions.d/cfbench.fish""#,
+        r#"source = "assets/man/cfbench.1", dest = "/usr/share/man/man1/cfbench.1""#,
+    ] {
+        assert!(manifest.contains(asset), "missing package asset: {asset}");
+    }
+}
+
+#[test]
+fn release_archives_include_generated_cli_assets_on_every_platform() {
+    let ci = workflow(".github/workflows/ci.yml");
+    let release = workflow(".github/workflows/release.yml");
+
+    assert!(ci.contains("sh tests/package_standalone.sh"));
+    assert_eq!(release.matches("scripts/package-standalone.sh").count(), 2);
+    assert!(release.contains("Copy-Item assets/completions -Destination $stage -Recurse"));
+    assert!(release.contains("Copy-Item assets/man -Destination $stage -Recurse"));
+    assert!(release.contains("Compress-Archive -Path \"$stage/*\""));
+}
