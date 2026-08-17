@@ -116,8 +116,8 @@ fn release_builds_and_publishes_the_complete_native_matrix() {
     );
     assert_eq!(workflow.matches("x86_64-unknown-linux-gnu").count(), 1);
     assert_eq!(workflow.matches("key: ${{ matrix.name }}").count(), 1);
-    assert!(workflow.contains("actions/upload-artifact@v4"));
-    assert!(workflow.contains("actions/download-artifact@v4"));
+    assert!(workflow.contains("actions/upload-artifact@v7"));
+    assert!(workflow.contains("actions/download-artifact@v8"));
     assert!(workflow.contains("scripts/assemble-release.sh"));
     assert!(workflow.contains("--version"));
     assert!(workflow.contains("needs: [build-linux-x86_64, build-standalone]"));
