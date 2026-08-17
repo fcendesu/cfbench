@@ -72,7 +72,7 @@ jobs:
           sh scripts/package-standalone.sh \
             target/release/cfbench "$tag" x86_64-unknown-linux-gnu dist
       - name: Upload Linux x86_64 artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: linux-x86_64
           path: dist/*
@@ -147,7 +147,7 @@ jobs:
           Copy-Item assets/man -Destination $stage -Recurse
           Compress-Archive -Path "$stage/*" -DestinationPath "dist/cfbench-$env:GITHUB_REF_NAME-${{ matrix.target }}.zip"
       - name: Upload standalone artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.name }}
           path: dist/*
@@ -165,7 +165,7 @@ jobs:
       - name: Check out tag
         uses: actions/checkout@v7
       - name: Download release artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: dist
           merge-multiple: true
