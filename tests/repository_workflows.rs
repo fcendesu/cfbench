@@ -77,6 +77,31 @@ fn releases_remain_tag_only() {
 }
 
 #[test]
+fn cloudflare_compatibility_monitor_is_weekly_and_minimally_privileged() {
+    let workflow = workflow(".github/workflows/cloudflare-compatibility.yml");
+
+    assert!(workflow.contains("on:\n  schedule:"));
+    assert!(workflow.contains("workflow_dispatch:"));
+    assert!(!workflow.contains("pull_request:"));
+    assert!(!workflow.contains("\n  push:"));
+    assert!(workflow.contains("permissions:\n  contents: read\n  issues: write"));
+    assert!(workflow.contains(
+        "concurrency:\n  group: cloudflare-compatibility-monitor\n  cancel-in-progress: false"
+    ));
+    assert!(workflow.contains("python3 scripts/check_cloudflare_compatibility.py"));
+    assert!(!workflow.contains("cargo run"));
+}
+
+#[test]
+fn ordinary_ci_runs_offline_compatibility_monitor_tests() {
+    let workflow = workflow(".github/workflows/ci.yml");
+
+    assert!(
+        workflow.contains("python3 -m unittest tests/test_cloudflare_compatibility_monitor.py")
+    );
+}
+
+#[test]
 fn release_builds_and_publishes_the_complete_native_matrix() {
     let workflow = workflow(".github/workflows/release.yml");
 

@@ -51,6 +51,13 @@ schedules, timing boundaries, thresholds, or statistical reductions. Native
 results must not be described as numerically identical to Cloudflare's browser
 test.
 
+The scheduled `Cloudflare compatibility` workflow is a review trigger, not an
+automatic compatibility claim. When it opens a tracking issue, inspect the
+linked release, commits, and methodology-sensitive paths; update the pinned
+fixture, implementation, documentation, and version metadata together when
+required. Maintainers can also run the workflow manually from GitHub Actions.
+Keep its tests offline and do not execute code downloaded from upstream.
+
 ## Testing
 
 Run the full local validation suite before submitting a code change:
@@ -60,6 +67,7 @@ cargo fmt --check
 cargo clippy --all-targets --all-features -- -D warnings
 cargo test --all-targets
 cargo build --release
+python3 -m unittest tests/test_cloudflare_compatibility_monitor.py
 ```
 
 Live Cloudflare tests consume network traffic and are ignored by default. They

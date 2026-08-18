@@ -14,6 +14,28 @@ v1.13.0 adds the optional `authorizationToken` configuration for attributing a t
 
 cfbench does not expose or send this token. Its public Cloudflare download and upload tests do not require one, and cfbench does not implement upstream TURN credentials or results logging. Metadata and the optional RPKI diagnostic are excluded from the upstream authorization mechanism.
 
+## Upstream monitoring
+
+The weekly `Cloudflare compatibility` workflow compares the version and commit
+above with Cloudflare Speedtest's latest release and default branch. A new
+release always requests review. Between releases, the workflow requests review
+only when post-baseline commits touch measurement configuration, engines,
+calculations, types, or numeric utilities.
+
+The monitor reads the pinned version and commit from
+`src/compatibility.rs`; the workflow does not maintain a second baseline. When
+review is needed, it creates at most one open tracking issue with upstream
+commit and path links plus a compatibility checklist. Repeated runs update no
+repository state while that issue remains open. Documentation-only, example,
+dependency, and upstream CI changes do not trigger an issue unless accompanied
+by a new release.
+
+The job uses GitHub's API only and never downloads or executes upstream code.
+API, rate-limit, and malformed-response failures fail the workflow instead of
+being reported as a current baseline. Its deterministic tests use synthetic
+offline responses; ordinary CI does not contact Cloudflare or GitHub for this
+check.
+
 ## Intentional native differences
 
 Cloudflare's browser engine uses `PerformanceResourceTiming`. A native reqwest client cannot reproduce the browser's connection-phase timing boundaries, `PerformanceResourceTiming.transferSize`, exact on-wire header accounting, browser cache/service-worker behavior, or v1.13.0's HTTP/1.1 server-time-delta calibration. cfbench therefore reports actual payload bytes with Cloudflare's 0.5% overhead estimate and native request/stream durations; it does not claim identical results with the website.
