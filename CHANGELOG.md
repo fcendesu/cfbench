@@ -13,6 +13,9 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
   plus a generated `cfbench(1)` manual page.
 - Debian, RPM, and standalone release artifacts now include generated shell
   completion and manual assets kept synchronized with the Clap command.
+- A weekly, manually runnable compatibility monitor now opens one deduplicated
+  tracking issue when Cloudflare Speedtest publishes a new release or changes
+  methodology-sensitive paths beyond cfbench's pinned baseline.
 
 ## [0.4.0] - 2026-08-15
 

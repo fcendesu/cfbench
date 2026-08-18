@@ -44,6 +44,9 @@ jobs:
           sh tests/install_script.sh
           sh tests/package_standalone.sh
           sh tests/release_artifacts.sh
+      - name: Test compatibility monitor
+        if: matrix.primary
+        run: python3 -m unittest tests/test_cloudflare_compatibility_monitor.py
       - name: Install Rust
         uses: dtolnay/rust-toolchain@master
         with:
