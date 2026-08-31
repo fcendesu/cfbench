@@ -7,6 +7,14 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+### Compatibility
+
+- Updated the reviewed Cloudflare Speedtest baseline to v1.13.1, commit
+  `b387f42dfe2103f11f8b4c978cdea48abfcc03b3`.
+- Confirmed that v1.13.1 changes only the experimental, opt-in authorization
+  transport and leaves cfbench's schedule, constants, timing, parsing, and
+  reductions unchanged; cfbench continues not to expose or send authorization.
+
 ### Added
 
 - Added offline `completions` generation for Bash, Zsh, Fish, and PowerShell,
