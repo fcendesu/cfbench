@@ -3,7 +3,7 @@ mod support;
 use cfbench::compatibility::{SPEEDTEST_COMMIT, SPEEDTEST_VERSION};
 use cfbench::statistics::{jitter, percentile};
 
-use support::upstream_v1_13_0::fixture;
+use support::upstream_v1_13_1::fixture;
 
 #[test]
 fn pinned_reduction_vectors_match_cfbench_statistics() {
@@ -31,7 +31,7 @@ fn pinned_reduction_vectors_match_cfbench_statistics() {
 }
 
 #[test]
-fn pinned_constants_record_the_unchanged_v1_13_0_runtime_contract() {
+fn pinned_constants_record_the_unchanged_v1_13_1_runtime_contract() {
     let constants = fixture().constants;
 
     assert_eq!(constants.estimated_server_time_ms, 0.0);
@@ -50,27 +50,34 @@ fn fixture_records_a_reviewable_upstream_source() {
 
     assert_eq!(
         fixture.source,
-        "https://github.com/cloudflare/speedtest/tree/v1.13.0"
+        "https://github.com/cloudflare/speedtest/tree/v1.13.1"
     );
-    assert_eq!(fixture.upstream_version, "v1.13.0");
+    assert_eq!(fixture.upstream_version, "v1.13.1");
     assert_eq!(
         fixture.upstream_commit,
-        "5954dee4cc83548a9e5031140df4548f71cd1458"
+        "b387f42dfe2103f11f8b4c978cdea48abfcc03b3"
     );
     assert_eq!(fixture.upstream_version, SPEEDTEST_VERSION);
     assert_eq!(fixture.upstream_commit, SPEEDTEST_COMMIT);
 }
 
 #[test]
-fn fixture_records_the_optional_unexposed_v1_13_authorization_contract() {
+fn fixture_records_the_optional_unexposed_v1_13_1_authorization_contract() {
     let document: serde_json::Value =
-        serde_json::from_str(include_str!("fixtures/cloudflare-speedtest-v1.13.0.json"))
+        serde_json::from_str(include_str!("fixtures/cloudflare-speedtest-v1.13.1.json"))
             .expect("pinned Cloudflare Speedtest fixture is valid JSON");
     let authorization = &document["authorization_token"];
 
     assert_eq!(authorization["option"], "authorizationToken");
-    assert_eq!(authorization["query_parameter"], "jwt");
+    assert_eq!(authorization["transport"], "authorization_bearer_header");
     assert!(authorization["default"].is_null());
+    assert_eq!(authorization["enabled_option"], "authorizationEnabled");
+    assert_eq!(authorization["enabled_by_default"], false);
+    assert_eq!(
+        authorization["allow_insecure_option"],
+        "allowInsecureAuthorizationToken"
+    );
+    assert_eq!(authorization["allow_insecure_default"], false);
     assert_eq!(authorization["https_only"], true);
     assert_eq!(
         authorization["cfbench_relevant_endpoints"],

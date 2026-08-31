@@ -17,7 +17,7 @@
 
 ## Compatibility
 
-The public baseline is Cloudflare Speedtest `v1.13.0`, commit `5954dee4cc83548a9e5031140df4548f71cd1458`. Read [docs/COMPATIBILITY.md](docs/COMPATIBILITY.md) before changing schedules, timing, thresholds, or reductions.
+The public baseline is Cloudflare Speedtest `v1.13.1`, commit `b387f42dfe2103f11f8b4c978cdea48abfcc03b3`. Read [docs/COMPATIBILITY.md](docs/COMPATIBILITY.md) before changing schedules, timing, thresholds, or reductions.
 
 Never claim numeric identity with the browser test. Native reqwest timing has different observable boundaries from browser `PerformanceResourceTiming`.
 

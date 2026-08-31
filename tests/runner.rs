@@ -21,7 +21,7 @@ use cfbench::runner::{
 
 mod support;
 
-use support::upstream_v1_13_0::{FixtureStep, fixture};
+use support::upstream_v1_13_1::{FixtureStep, fixture};
 
 #[derive(Clone)]
 struct ScriptedTransport {
@@ -1165,7 +1165,7 @@ async fn bypass_and_direction_finish_states_are_independent() {
 }
 
 #[tokio::test]
-async fn every_v1_13_0_idle_latency_phase_accumulates_in_measurement_order() {
+async fn every_v1_13_1_idle_latency_phase_accumulates_in_measurement_order() {
     let fixture = fixture();
     let latency_steps = fixture
         .schedule

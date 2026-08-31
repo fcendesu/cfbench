@@ -135,7 +135,7 @@ class CompatibilityMonitorTests(unittest.TestCase):
     def test_baseline_is_read_from_rust_source_of_truth(self):
         baseline = MONITOR.load_baseline(ROOT / "src" / "compatibility.rs")
 
-        self.assertEqual(baseline.version, "v1.13.0")
+        self.assertEqual(baseline.version, "v1.13.1")
         self.assertEqual(len(baseline.commit), 40)
 
     def test_issue_body_escapes_untrusted_path_text(self):
